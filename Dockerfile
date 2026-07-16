@@ -13,6 +13,8 @@ ENV DATABASE_URL="file:./dev.db"
 FROM base AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
+# Match the npm that generated package-lock.json (avoids "Invalid Version" on ci).
+RUN npm i -g npm@11
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
