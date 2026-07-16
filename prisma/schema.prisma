@@ -1,0 +1,239 @@
+// FraudLens AI — Prisma schema (SQLite for local MVP).
+// The app's runtime store is the deterministic generator; this schema + seed
+// mirror that data into SQLite to demonstrate real persistence & DB setup.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id               String        @id
+  name             String
+  nameEn           String
+  nationalIdMasked String
+  segment          String
+  accountAgeMonths Int
+  avgTxnAmount     Float
+  txnCount30d      Int
+  homeCity         String
+  homeCityEn       String
+  trustScore       Int
+  transactions     Transaction[]
+}
+
+model Device {
+  id               String        @id
+  type             String
+  label            String
+  known            Boolean
+  firstSeenDaysAgo Int
+  txnCount         Int
+  trustScore       Int
+  transactions     Transaction[]
+}
+
+model Beneficiary {
+  id               String        @id
+  name             String
+  nameEn           String
+  bank             String
+  type             String
+  known            Boolean
+  txnCount         Int
+  firstSeenDaysAgo Int
+  trustScore       Int
+  transactions     Transaction[]
+}
+
+model FraudRule {
+  id              String        @id
+  name            String
+  nameEn          String
+  description     String
+  descriptionEn   String
+  category        String
+  categoryEn      String
+  status          String
+  severity        String
+  action          String
+  weight          Float
+  amountThreshold Float?
+  triggers        RuleTrigger[]
+  versions        RuleVersion[]
+}
+
+model RuleVersion {
+  id       Int       @id @default(autoincrement())
+  rule     FraudRule @relation(fields: [ruleId], references: [id])
+  ruleId   String
+  version  String
+  changeAr String
+  changeEn String
+  at       DateTime
+}
+
+model Transaction {
+  id                String             @id
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  customerId        String
+  amount            Float
+  currency          String
+  channel           String
+  device            Device             @relation(fields: [deviceId], references: [id])
+  deviceId          String
+  beneficiary       Beneficiary        @relation(fields: [beneficiaryId], references: [id])
+  beneficiaryId     String
+  timestamp         DateTime
+  hour              Int
+  originalDecision  String
+  originalRiskScore Int
+  mfaPassed         Boolean
+  failedLogins      Int
+  velocity1h        Int
+  locationFamiliar  Boolean
+  timeFamiliar      Boolean
+  isActuallyFraud   Boolean
+  scenario          String
+  processingTimeMs  Int
+  triggers          RuleTrigger[]
+  decision          FraudDecision?
+  aiRecommendation  AIRecommendation?
+  investigationCase InvestigationCase?
+}
+
+model RuleTrigger {
+  id            Int         @id @default(autoincrement())
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  transactionId String
+  rule          FraudRule   @relation(fields: [ruleId], references: [id])
+  ruleId        String
+
+  @@unique([transactionId, ruleId])
+}
+
+model FraudDecision {
+  id            Int         @id @default(autoincrement())
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  transactionId String      @unique
+  decision      String
+  riskScore     Int
+  engine        String
+}
+
+model AIRecommendation {
+  id                      Int         @id @default(autoincrement())
+  transaction             Transaction @relation(fields: [transactionId], references: [id])
+  transactionId           String      @unique
+  recommendation          String
+  optimizedRiskScore      Int
+  falsePositiveProbability Int
+  confidence              Int
+  reasonCodes             String
+}
+
+model InvestigationCase {
+  id            Int                   @id @default(autoincrement())
+  transaction   Transaction           @relation(fields: [transactionId], references: [id])
+  transactionId String                @unique
+  status        String
+  feedback      InvestigatorFeedback?
+}
+
+model InvestigatorFeedback {
+  id                Int               @id @default(autoincrement())
+  case              InvestigationCase @relation(fields: [caseId], references: [id])
+  caseId            Int               @unique
+  outcome           String
+  note              String
+  investigator      String
+  resolutionMinutes Int
+  at                DateTime
+}
+
+model Simulation {
+  id        Int               @id @default(autoincrement())
+  ruleId    String
+  config    String
+  createdAt DateTime
+  result    SimulationResult?
+}
+
+model SimulationResult {
+  id           Int        @id @default(autoincrement())
+  simulation   Simulation @relation(fields: [simulationId], references: [id])
+  simulationId Int        @unique
+  netBenefit   Float
+  verdict      String
+  payload      String
+}
+
+model Insight {
+  id              String   @id
+  titleAr         String
+  titleEn         String
+  category        String
+  categoryEn      String
+  severity        String
+  evidenceAr      String
+  evidenceEn      String
+  financialImpact Float
+  actionAr        String
+  actionEn        String
+  confidence      Int
+  status          String
+  createdAt       DateTime
+}
+
+model ModelMetric {
+  id                 String @id
+  label              String
+  totalTransactions  Int
+  fpRateBefore       Float
+  fpRateAfter        Float
+  recoveredTransactions Int
+  revenueRecovered   Float
+  fraudPrevented     Float
+  manualReviews      Int
+  accuracy           Float
+  precision          Float
+  recall             Float
+  falseNegativeRate  Float
+  drift              Float
+}
+
+model Integration {
+  id                    String   @id
+  name                  String
+  nameEn                String
+  category              String
+  categoryEn            String
+  connected             Boolean
+  lastSync              DateTime
+  transactionsProcessed Int
+  avgLatencyMs          Int
+  health                String
+}
+
+model AuditLog {
+  id     String   @id
+  at     DateTime
+  actor  String
+  action String
+  detail String
+}
+
+model FinancialAssumption {
+  id                 String @id @default("default")
+  avgRevenuePerTxn   Float
+  investigationCost  Float
+  supportCost        Float
+  churnCost          Float
+  avgFraudLoss       Float
+  monthlyVolume      Int
+  platformMonthlyCost Float
+}

@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   ZeRisk — premium enterprise fintech design system (light + coral)
+   ========================================================================== */
+
+@theme {
+  /* Neutral surface scale (light). Kept under the `navy-*` names so existing
+     utility classes remap to the light palette in one place. */
+  --color-navy-950: #eef2f9;
+  --color-navy-900: #ffffff;
+  --color-navy-850: #ffffff;
+  --color-navy-800: #f1f5f9;
+  --color-navy-750: #eef2f7;
+  --color-navy-700: #e6ebf3;
+  --color-navy-600: #dbe2ec;
+  --color-navy-500: #b8c2d4;
+
+  /* Coral primary accent */
+  --color-coral-300: #ffb08a;
+  --color-coral-400: #ff8f61;
+  --color-coral-500: #ff6b35;
+  --color-coral-600: #ef5316;
+  --color-coral-700: #c73f11;
+
+  --color-ink: #0f1b33;
+  --color-muted: #647089;
+
+  --font-sans: var(--font-geist-sans), "SF Arabic", "Geeza Pro", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+}
+
+:root {
+  --background: #eef2f9;
+  --foreground: #0f1b33;
+}
+
+@layer base {
+  * {
+    border-color: color-mix(in oklab, var(--color-navy-600) 85%, transparent);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background:
+      radial-gradient(1100px 600px at 100% -5%, rgba(255, 107, 53, 0.07), transparent 55%),
+      radial-gradient(900px 520px at -5% 0%, rgba(56, 116, 255, 0.06), transparent 50%),
+      var(--color-navy-950);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: rgba(255, 107, 53, 0.24);
+    color: #7a2e0d;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #b8c2d4;
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  .surface {
+    background: #ffffff;
+    border: 1px solid #e3e9f2;
+    box-shadow:
+      0 1px 2px 0 rgba(15, 27, 51, 0.04),
+      0 18px 40px -28px rgba(15, 27, 51, 0.18);
+  }
+  .surface-2 {
+    background: #f5f8fc;
+    border: 1px solid #e3e9f2;
+  }
+  .glass {
+    background: color-mix(in oklab, #ffffff 82%, transparent);
+    backdrop-filter: blur(14px);
+    border: 1px solid #e3e9f2;
+  }
+  .text-muted {
+    color: var(--color-muted);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .grad-coral {
+    background: linear-gradient(135deg, var(--color-coral-400), var(--color-coral-600));
+  }
+  .grad-text {
+    background: linear-gradient(120deg, var(--color-coral-600) 0%, var(--color-coral-400) 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .card-hover {
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--color-coral-500) 45%, transparent);
+    box-shadow: 0 26px 50px -28px rgba(255, 107, 53, 0.35);
+  }
+  .animate-in-up {
+    animation: inUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes inUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Recharts polish (light theme) */
+.recharts-cartesian-grid line {
+  stroke: rgba(15, 27, 51, 0.08);
+}
+.recharts-text {
+  fill: var(--color-muted);
+  font-size: 11px;
+}
+.recharts-default-tooltip {
+  background: #ffffff !important;
+  border: 1px solid #e3e9f2 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 30px -12px rgba(15, 27, 51, 0.25);
+  color: #0f1b33 !important;
+}
