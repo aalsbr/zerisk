@@ -14,12 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 # ---- deps ----
 FROM base AS deps
 WORKDIR /app
-# Match the npm that generated package-lock.json.
-RUN npm i -g npm@11
-COPY package.json package-lock.json ./
+# The committed package-lock.json (generated on macOS) has empty-version entries
+# for sharp's musl optional binaries, which breaks npm in the container. Resolve
+# fresh on Linux from package.json instead — npm writes a correct lockfile.
+COPY package.json ./
 COPY prisma ./prisma
-# `npm install` (not `ci`) tolerates/repairs the cross-platform optional-dep
-# entries (sharp musl binaries) that lack a version field in the lockfile.
 RUN npm install --no-audit --no-fund --loglevel=error
 
 # ---- build ----
