@@ -41,7 +41,8 @@ async function callResponses(
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  // Reasoning models (e.g. gpt-5.5) can take a while — allow generous time.
+  const timeout = setTimeout(() => controller.abort(), 45000);
   try {
     const res = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -61,18 +62,33 @@ async function callResponses(
     });
     if (!res.ok) return null;
     const data = await res.json();
-    // Responses API convenience field, with fallbacks for shape variance.
-    const text =
-      data.output_text ??
-      data.output?.[0]?.content?.[0]?.text ??
-      data.choices?.[0]?.message?.content ??
-      null;
-    return typeof text === "string" ? text : null;
+    return extractResponseText(data);
   } catch {
     return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Robustly extract assistant text from a Responses API payload. Reasoning models
+// return an `output` array whose first item is a `reasoning` block and whose
+// actual answer lives in a later `message` item's `output_text` content.
+function extractResponseText(data: unknown): string | null {
+  const d = data as {
+    output_text?: unknown;
+    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: unknown }> }>;
+    choices?: Array<{ message?: { content?: unknown } }>;
+  };
+  if (typeof d.output_text === "string" && d.output_text.trim()) return d.output_text;
+  const items = Array.isArray(d.output) ? d.output : [];
+  const message = items.find((o) => o?.type === "message") ?? items[items.length - 1];
+  const content = Array.isArray(message?.content) ? message!.content : [];
+  const part =
+    content.find((c) => c?.type === "output_text" && typeof c.text === "string") ??
+    content.find((c) => typeof c?.text === "string");
+  if (part && typeof part.text === "string" && part.text.trim()) return part.text;
+  const legacy = d.choices?.[0]?.message?.content;
+  return typeof legacy === "string" ? legacy : null;
 }
 
 function parseJson<T>(text: string | null): T | null {
