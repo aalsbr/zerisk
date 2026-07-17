@@ -57,10 +57,11 @@ const DECISIONS: Decision[] = ["APPROVE", "REVIEW", "REJECT", "MONITOR"];
 const SEGMENTS: (CustomerSegment | "ALL")[] = [
   "ALL",
   "RETAIL",
-  "PREMIER",
-  "PRIVATE",
   "SME",
-  "CORPORATE",
+  "PREMIUM",
+  "NEW_CUSTOMER",
+  "LONG_TERM_CUSTOMER",
+  "HIGH_VALUE_CUSTOMER",
 ];
 
 export function SimulationView({

@@ -7,6 +7,7 @@
 // ============================================================================
 
 import type {
+  Calibration,
   Decision,
   ReasonCode,
   ReasonDetail,
@@ -15,6 +16,20 @@ import type {
   ScoringInput,
   ScoringResult,
 } from "./types";
+
+// Neutral calibration (FL-MVP-1.0 baseline) — used when none is supplied so the
+// engine stays fully backward-compatible and deterministic.
+export type CalibrationLike = Pick<
+  Calibration,
+  "deviceTrustBoost" | "beneficiaryHistoryBoost" | "velocityWeight" | "fpCalibration" | "confidenceBias"
+>;
+export const NEUTRAL_CALIBRATION: CalibrationLike = {
+  deviceTrustBoost: 0,
+  beneficiaryHistoryBoost: 0,
+  velocityWeight: 1,
+  fpCalibration: 1,
+  confidenceBias: 0,
+};
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 const round = (n: number) => Math.round(n);
@@ -45,7 +60,10 @@ export const DEFAULT_GOVERNANCE: Governance = {
 
 // ---- Sub-score computation ---------------------------------------------------
 
-export function computeRiskBreakdown(i: ScoringInput): RiskBreakdown {
+export function computeRiskBreakdown(
+  i: ScoringInput,
+  cal: CalibrationLike = NEUTRAL_CALIBRATION,
+): RiskBreakdown {
   // Device risk
   let device: number;
   if (i.deviceKnown) {
@@ -54,6 +72,12 @@ export function computeRiskBreakdown(i: ScoringInput): RiskBreakdown {
   } else {
     device = 58 + (i.deviceAgeDays < 1 ? 12 : 0);
   }
+  // Learned: confirmed-legit history on this device lowers its risk (the core
+  // learning lever); confirmed fraud raises it; shared-device raises it.
+  device -= Math.min(i.deviceLegitCount ?? 0, 20) * 1.1;
+  device += Math.min(i.deviceFraudCount ?? 0, 5) * 10;
+  device -= cal.deviceTrustBoost * (i.deviceKnown ? 0.5 : 0.12);
+  if ((i.deviceCustomerCount ?? 1) > 3) device += Math.min((i.deviceCustomerCount ?? 1) - 3, 6) * 5;
 
   // Behavioral risk (amount vs personal baseline + auth signals + time)
   const ratio = i.amount / Math.max(i.customerAvgAmount, 1);
@@ -65,25 +89,31 @@ export function computeRiskBreakdown(i: ScoringInput): RiskBreakdown {
   if (!i.mfaPassed) behavioral += 22;
   behavioral += Math.min(i.failedLogins, 5) * 6;
   if (!i.timeFamiliar) behavioral += 10;
+  if (i.passwordResetRecently) behavioral += 16;
 
   // Beneficiary risk
   let beneficiary: number;
   if (i.beneficiaryKnown) {
     beneficiary = 16 - Math.min(i.beneficiaryTxnCount, 40) * 0.3;
+    beneficiary -= Math.min(i.beneficiaryLegitCount ?? 0, 15) * 0.6;
+    beneficiary -= cal.beneficiaryHistoryBoost * 0.4;
   } else {
-    beneficiary = 50;
+    // Unknown beneficiary — but confirmed-legit history on it (learned) lowers risk.
+    beneficiary = 50 - Math.min(i.beneficiaryLegitCount ?? 0, 10) * 4 + Math.min(i.beneficiaryFraudCount ?? 0, 3) * 8;
   }
 
-  // Velocity risk
-  const velocity = Math.min(i.velocity1h, 10) * 6;
+  // Velocity risk (learned weighting)
+  const velocity = Math.min(i.velocity1h, 10) * 6 * cal.velocityWeight;
 
   // Location risk
   const location = i.locationFamiliar ? 8 : 46;
 
-  // Historical fraud risk
-  let historical = i.historicalFraudCount * 22;
+  // Historical fraud risk (+ learned segment/channel base rates). Capped so a
+  // single past fraud does not tank every one of a customer's legit transactions.
+  let historical = Math.min(i.historicalFraudCount, 4) * 14;
   historical -= Math.min(i.historicalLegitCount, 50) * 0.2;
   historical += i.similarFraudOutcomes * 8 - i.similarLegitOutcomes * 2;
+  historical += (i.segmentFraudRate ?? 0) * 30 + (i.channelFraudRate ?? 0) * 20;
   if (i.accountAgeMonths > 24) historical -= 6;
   else if (i.accountAgeMonths < 3) historical += 8;
 
@@ -126,8 +156,9 @@ function detail(
 export function scoreTransaction(
   input: ScoringInput,
   gov: Governance = DEFAULT_GOVERNANCE,
+  cal: CalibrationLike = NEUTRAL_CALIBRATION,
 ): ScoringResult {
-  const breakdown = computeRiskBreakdown(input);
+  const breakdown = computeRiskBreakdown(input, cal);
 
   let optimized =
     breakdown.device * WEIGHTS.device +
@@ -138,9 +169,16 @@ export function scoreTransaction(
     breakdown.historical * WEIGHTS.historical;
 
   // Triggered-rule severity nudges the score up (a structural signal that the
-  // legacy engine saw something worth flagging, even if mitigated).
+  // legacy engine saw something worth flagging, even if mitigated). The learned
+  // per-rule weight factor scales this down for poorly-performing rules.
   const sev = severitySum(input.triggeredRuleSeverities);
-  optimized += Math.min(sev, 16) * 0.7 + input.triggeredRuleSeverities.length * 2;
+  const ruleFactor = input.ruleWeightFactor ?? 1;
+  optimized += (Math.min(sev, 16) * 0.7 + input.triggeredRuleSeverities.length * 2) * ruleFactor;
+
+  // Learned trusted-pattern recognition: accumulated confirmed-legit outcomes on
+  // this device + beneficiary directly lower the score (this is the visible
+  // learning lever — more feedback on a pattern → lower future risk).
+  optimized -= Math.min((input.deviceLegitCount ?? 0) + (input.beneficiaryLegitCount ?? 0), 12) * 1.6;
 
   // Investigator ground-truth override: a human confirmed this is legitimate
   if (input.investigatorConfirmedLegit) {
@@ -176,6 +214,7 @@ export function scoreTransaction(
   const stabilizer = 6;
   let fp = (100 * legitSignal) / (legitSignal + fraudSignal + stabilizer);
   if (!legacyNegative) fp *= 0.35; // legacy already approved → low FP relevance
+  fp *= cal.fpCalibration; // learned false-positive calibration
   const falsePositiveProbability = round(clamp(fp));
 
   // ---- Confidence ----
@@ -191,7 +230,8 @@ export function scoreTransaction(
         Math.min(input.historicalLegitCount, 50) * 0.18 +
         (input.deviceKnown ? 5 : 0) +
         (input.mfaPassed ? 4 : 0) -
-        (input.failedLogins > 0 ? 6 : 0),
+        (input.failedLogins > 0 ? 6 : 0) +
+        cal.confidenceBias,
       55,
       98,
     ),
@@ -200,17 +240,28 @@ export function scoreTransaction(
   // ---- Recommendation ----
   let recommendation = thresholdDecision(optimizedRiskScore, gov);
 
+  // Transaction-centric strong-fraud gate (not a customer's lifetime count, so a
+  // single past fraud can't force-flag every future legitimate transaction).
   const strongFraud =
-    input.historicalFraudCount > 0 ||
+    input.historicalFraudCount >= 3 ||
     (!input.mfaPassed && !input.deviceKnown) ||
-    optimizedRiskScore >= 80 ||
-    fraudSignal >= 45;
+    (!input.mfaPassed && input.failedLogins >= 2) ||
+    optimizedRiskScore >= 78 ||
+    fraudSignal >= 50;
 
   if (strongFraud) {
-    recommendation = optimizedRiskScore >= 60 ? "REJECT" : "REVIEW";
+    recommendation = optimizedRiskScore >= 55 ? "REJECT" : "REVIEW";
   } else if (falsePositiveProbability >= 80 && optimizedRiskScore < 60) {
-    // Strong false-positive signal → recover the legitimate transaction
-    recommendation = optimizedRiskScore <= gov.monitorMax ? "APPROVE" : "REVIEW";
+    // Strong false-positive signal → recover the legitimate transaction, EXCEPT a
+    // high-value transfer to a brand-new beneficiary with no confirmed-legit
+    // history is routed to REVIEW (cautious) until that history is earned.
+    const cautiousNewBeneficiary =
+      !input.beneficiaryKnown && input.amount >= 5000 && (input.beneficiaryLegitCount ?? 0) < 1;
+    recommendation = cautiousNewBeneficiary
+      ? "REVIEW"
+      : optimizedRiskScore <= gov.monitorMax
+        ? "APPROVE"
+        : "REVIEW";
   }
 
   // Governance guardrails (never silently auto-approve high-value overrides)

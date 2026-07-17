@@ -19,9 +19,13 @@ model Customer {
   segment          String
   accountAgeMonths Int
   avgTxnAmount     Float
+  amountStdDev     Float
   txnCount30d      Int
   homeCity         String
   homeCityEn       String
+  region           String
+  normalHourStart  Int
+  normalHourEnd    Int
   trustScore       Int
   transactions     Transaction[]
 }
@@ -84,10 +88,12 @@ model Transaction {
   amount            Float
   currency          String
   channel           String
+  category          String
   device            Device             @relation(fields: [deviceId], references: [id])
   deviceId          String
   beneficiary       Beneficiary        @relation(fields: [beneficiaryId], references: [id])
   beneficiaryId     String
+  region            String
   timestamp         DateTime
   hour              Int
   originalDecision  String
@@ -95,9 +101,11 @@ model Transaction {
   mfaPassed         Boolean
   failedLogins      Int
   velocity1h        Int
+  passwordResetRecently Boolean        @default(false)
   locationFamiliar  Boolean
   timeFamiliar      Boolean
   isActuallyFraud   Boolean
+  outcome           String?
   scenario          String
   processingTimeMs  Int
   triggers          RuleTrigger[]
@@ -236,4 +244,77 @@ model FinancialAssumption {
   avgFraudLoss       Float
   monthlyVolume      Int
   platformMonthlyCost Float
+}
+
+// ---- Learning loop persistence ---------------------------------------------
+
+model ModelVersion {
+  id           Int      @id @default(autoincrement())
+  version      String   @unique
+  createdAt    DateTime
+  labeledCount Int
+  triggeredBy  String
+  note         String
+  fpRate       Float
+  recall       Float
+  precision    Float
+  accuracy     Float
+}
+
+model ModelCalibration {
+  id                     Int      @id @default(autoincrement())
+  version                String
+  createdAt              DateTime
+  labeledCount           Int
+  deviceTrustBoost       Float
+  beneficiaryHistoryBoost Float
+  velocityWeight         Float
+  fpCalibration          Float
+  confidenceBias         Float
+  payload                String
+}
+
+model LearningEvent {
+  id                     String   @id
+  transactionId          String?
+  feedbackOutcome        String?
+  previousRecommendation String?
+  finalOutcome           String?
+  affectedRules          String
+  affectedFeatures       String
+  changes                String
+  previousVersion        String
+  newVersion             String
+  at                     DateTime
+  actor                  String
+  descriptionEn          String
+}
+
+model FeatureStatistic {
+  id               Int    @id @default(autoincrement())
+  feature          String @unique
+  totalWithFeature Int
+  fraudWithFeature Int
+  legitWithFeature Int
+  fraudRate        Float
+  weightHint       Float
+}
+
+model RiskProfileSnapshot {
+  id        Int      @id @default(autoincrement())
+  kind      String
+  entityId  String
+  version   String
+  at        DateTime
+  payload   String
+}
+
+model DecisionOutcome {
+  id               Int      @id @default(autoincrement())
+  transactionId    String   @unique
+  originalDecision String
+  aiRecommendation String
+  finalOutcome     String
+  isActuallyFraud  Boolean
+  at               DateTime
 }

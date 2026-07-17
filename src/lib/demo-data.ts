@@ -1,667 +1,390 @@
 // ============================================================================
-// ZeRisk — Deterministic demo dataset generator
+// ZeRisk — deterministic base dataset generator.
 //
-// Produces a fully reproducible, internally-consistent dataset (customers,
-// devices, beneficiaries, rules, transactions, cases, insights, metrics,
-// integrations). The Prisma seed writes THIS into SQLite; the app reads the
-// same generator so charts and analytics always render, online or offline.
+// Produces reproducible entities + RAW transactions (with ground truth + seeded
+// investigator labels). AI enrichment/scoring is applied dynamically by the
+// store (so investigator feedback + recalibration change results live). The
+// Prisma seed mirrors this into SQLite.
 // ============================================================================
 
 import { Rng } from "./prng";
-import { scoreTransaction } from "./scoring";
 import type {
   Beneficiary,
+  Channel,
   Customer,
+  CustomerSegment,
   Device,
-  EnrichedTransaction,
   FraudRule,
   Insight,
   Integration,
+  InvestigationOutcome,
   MonthlyMetric,
+  Region,
   ScenarioType,
-  ScoringInput,
   Transaction,
+  TxnCategory,
 } from "./types";
 
-// Fixed reference "now" so timestamps are deterministic (today per demo).
 export const BASE_NOW = Date.UTC(2026, 6, 17, 12, 0, 0);
 const DAY = 86400000;
-
 const iso = (msAgo: number) => new Date(BASE_NOW - msAgo).toISOString();
 
-// ---- Fraud rules -------------------------------------------------------------
+// ---- Fixed demo transactions (presenter can always search these) ------------
+
+export const DEMO_IDS = {
+  falsePositive: "TX-DEMO-FP-001",
+  confirmedFraud: "TX-DEMO-FRAUD-001",
+  lowRisk: "TX-DEMO-LOW-001",
+  review: "TX-DEMO-REVIEW-001",
+  ruleFailure: "TX-DEMO-RULE-001",
+  falseNegative: "TX-DEMO-FN-001",
+  learn1: "TX-DEMO-LEARN-001",
+  learn2: "TX-DEMO-LEARN-002",
+};
+// Back-compat for existing Demo Story page.
+export const HERO_IDS = {
+  falsePositive: DEMO_IDS.falsePositive,
+  confirmedFraud: DEMO_IDS.confirmedFraud,
+  lowRisk: DEMO_IDS.lowRisk,
+  ambiguous: DEMO_IDS.review,
+  ruleFailure: DEMO_IDS.ruleFailure,
+};
+export const DEMO_ID_LIST = Object.values(DEMO_IDS);
+export const LEARN_DEVICE_ID = "DEV-LEARN-01";
+export const LEARN_BEN_ID = "BEN-LEARN-01";
+
+// ---- Fraud rules (15) --------------------------------------------------------
 
 export function buildRules(): FraudRule[] {
+  const r = (
+    id: string, name: string, nameEn: string, description: string, descriptionEn: string,
+    category: string, categoryEn: string, status: FraudRule["status"], severity: FraudRule["severity"],
+    action: FraudRule["action"], weight: number, amountThreshold?: number,
+  ): FraudRule => ({ id, name, nameEn, description, descriptionEn, category, categoryEn, status, severity, action, weight, amountThreshold });
   return [
-    {
-      id: "FR-011",
-      name: "مبلغ مرتفع لشريحة العميل",
-      nameEn: "High amount for customer segment",
-      description: "يُفعّل عند تجاوز المبلغ الحد المعتاد لشريحة العميل.",
-      descriptionEn: "Triggers when the amount exceeds the segment's usual band.",
-      category: "المبلغ",
-      categoryEn: "Amount",
-      status: "ACTIVE",
-      severity: "MEDIUM",
-      action: "REVIEW",
-      weight: 18,
-      amountThreshold: 15000,
-    },
-    {
-      id: "FR-017",
-      name: "جهاز جديد ومبلغ يتجاوز 5,000 ريال",
-      nameEn: "New device and amount above SAR 5,000",
-      description: "يرفض العمليات من جهاز جديد بمبلغ يتجاوز 5,000 ريال.",
-      descriptionEn: "Rejects transactions from a new device above SAR 5,000.",
-      category: "الجهاز",
-      categoryEn: "Device",
-      status: "ACTIVE",
-      severity: "HIGH",
-      action: "REJECT",
-      weight: 34,
-      amountThreshold: 5000,
-    },
-    {
-      id: "FR-019",
-      name: "محاولات دخول فاشلة متعددة",
-      nameEn: "Multiple failed login attempts",
-      description: "يُفعّل عند تكرار محاولات الدخول الفاشلة قبل العملية.",
-      descriptionEn: "Triggers on repeated failed logins before the transaction.",
-      category: "المصادقة",
-      categoryEn: "Authentication",
-      status: "ACTIVE",
-      severity: "HIGH",
-      action: "REVIEW",
-      weight: 28,
-    },
-    {
-      id: "FR-023",
-      name: "أول تحويل لمستفيد دولي",
-      nameEn: "First transfer to international beneficiary",
-      description: "يراجع أول تحويل إلى مستفيد دولي جديد.",
-      descriptionEn: "Reviews the first transfer to a new international beneficiary.",
-      category: "المستفيد",
-      categoryEn: "Beneficiary",
-      status: "ACTIVE",
-      severity: "MEDIUM",
-      action: "REVIEW",
-      weight: 22,
-    },
-    {
-      id: "FR-024",
-      name: "عملية خارج الأوقات الاعتيادية للعميل",
-      nameEn: "Transaction outside customer's normal time",
-      description: "يرفض العمليات التي تتم خارج نمط الأوقات المعتاد للعميل.",
-      descriptionEn: "Rejects transactions outside the customer's usual time pattern.",
-      category: "السلوك",
-      categoryEn: "Behavior",
-      status: "ACTIVE",
-      severity: "MEDIUM",
-      action: "REJECT",
-      weight: 24,
-    },
-    {
-      id: "FR-028",
-      name: "سرعة عمليات مرتفعة في نافذة قصيرة",
-      nameEn: "High transaction velocity in short window",
-      description: "يُفعّل عند تنفيذ عدة عمليات خلال فترة قصيرة.",
-      descriptionEn: "Triggers on many transactions within a short window.",
-      category: "السرعة",
-      categoryEn: "Velocity",
-      status: "ACTIVE",
-      severity: "HIGH",
-      action: "REVIEW",
-      weight: 30,
-    },
-    {
-      id: "FR-031",
-      name: "مستفيد جديد بمبلغ مرتفع",
-      nameEn: "New beneficiary with high amount",
-      description: "يرفض التحويلات الكبيرة إلى مستفيد جديد.",
-      descriptionEn: "Rejects large transfers to a brand-new beneficiary.",
-      category: "المستفيد",
-      categoryEn: "Beneficiary",
-      status: "ACTIVE",
-      severity: "HIGH",
-      action: "REJECT",
-      weight: 32,
-      amountThreshold: 10000,
-    },
-    {
-      id: "FR-033",
-      name: "موقع غير معتاد / تنقل جغرافي سريع",
-      nameEn: "Unfamiliar location / geo-velocity",
-      description: "يُفعّل عند تنفيذ العملية من موقع غير معتاد للعميل.",
-      descriptionEn: "Triggers when the transaction is from an unfamiliar location.",
-      category: "الموقع",
-      categoryEn: "Location",
-      status: "ACTIVE",
-      severity: "MEDIUM",
-      action: "REVIEW",
-      weight: 20,
-    },
-    {
-      id: "FR-042",
-      name: "نشاط مفاجئ على حساب خامل",
-      nameEn: "Sudden activity on dormant account",
-      description: "يراقب النشاط المفاجئ بعد فترة خمول طويلة.",
-      descriptionEn: "Monitors sudden activity after a long dormant period.",
-      category: "السلوك",
-      categoryEn: "Behavior",
-      status: "MONITORING",
-      severity: "LOW",
-      action: "MONITOR",
-      weight: 12,
-    },
-    {
-      id: "FR-047",
-      name: "مبلغ أسفل حد الإبلاغ مباشرة",
-      nameEn: "Amount just below reporting threshold",
-      description: "يراقب المبالغ القريبة من حد الإبلاغ التنظيمي.",
-      descriptionEn: "Monitors amounts just under the regulatory reporting threshold.",
-      category: "الامتثال",
-      categoryEn: "Compliance",
-      status: "ACTIVE",
-      severity: "MEDIUM",
-      action: "MONITOR",
-      weight: 16,
-    },
+    r("FR-011", "مبلغ مرتفع لشريحة العميل", "High amount for customer segment", "يُفعّل عند تجاوز المبلغ الحد المعتاد للشريحة.", "Triggers when amount exceeds the segment band.", "المبلغ", "Amount", "ACTIVE", "MEDIUM", "REVIEW", 18, 15000),
+    r("FR-017", "جهاز جديد ومبلغ مرتفع", "New device and high amount", "يرفض العمليات من جهاز جديد بمبلغ مرتفع.", "Rejects high-amount transactions from a new device.", "الجهاز", "Device", "ACTIVE", "HIGH", "REJECT", 34, 5000),
+    r("FR-019", "محاولات دخول فاشلة متعددة", "Multiple failed login attempts", "يُفعّل عند تكرار محاولات الدخول الفاشلة.", "Triggers on repeated failed logins.", "المصادقة", "Authentication", "ACTIVE", "HIGH", "REVIEW", 28),
+    r("FR-023", "أول تحويل لمستفيد دولي", "First transfer to international beneficiary", "يراجع أول تحويل لمستفيد دولي جديد.", "Reviews first transfer to a new international beneficiary.", "المستفيد", "Beneficiary", "ACTIVE", "MEDIUM", "REVIEW", 22),
+    r("FR-024", "عملية خارج الأوقات الاعتيادية", "Transaction outside normal time", "يرفض العمليات خارج نمط أوقات العميل.", "Rejects transactions outside the customer's usual time.", "السلوك", "Behavior", "ACTIVE", "MEDIUM", "REJECT", 24),
+    r("FR-028", "سرعة عمليات مرتفعة", "High transaction velocity", "يُفعّل عند تنفيذ عدة عمليات خلال فترة قصيرة.", "Triggers on many transactions in a short window.", "السرعة", "Velocity", "ACTIVE", "HIGH", "REVIEW", 30),
+    r("FR-031", "مستفيد جديد بمبلغ مرتفع", "High-value new beneficiary", "يرفض التحويلات الكبيرة لمستفيد جديد.", "Rejects large transfers to a brand-new beneficiary.", "المستفيد", "Beneficiary", "ACTIVE", "HIGH", "REJECT", 32, 10000),
+    r("FR-033", "موقع غير معتاد", "Unfamiliar location", "يُفعّل عند تنفيذ العملية من موقع غير معتاد.", "Triggers when the location is unfamiliar.", "الموقع", "Location", "ACTIVE", "MEDIUM", "REVIEW", 20),
+    r("FR-042", "نشاط مفاجئ على حساب خامل", "Sudden activity on dormant account", "يراقب النشاط المفاجئ بعد خمول.", "Monitors sudden activity after dormancy.", "السلوك", "Behavior", "MONITORING", "LOW", "MONITOR", 12),
+    r("FR-047", "مبلغ أسفل حد الإبلاغ", "Amount just below reporting threshold", "يراقب المبالغ القريبة من حد الإبلاغ.", "Monitors amounts near the reporting threshold.", "الامتثال", "Compliance", "ACTIVE", "MEDIUM", "MONITOR", 16),
+    r("FR-052", "جهاز مشترك بين عدة عملاء", "Device shared across customers", "يُفعّل عند استخدام جهاز من قبل عملاء متعددين.", "Triggers when a device is used by multiple customers.", "الجهاز", "Device", "ACTIVE", "HIGH", "REVIEW", 26),
+    r("FR-058", "تجزئة مبالغ لمستفيدين جدد", "Structuring to new beneficiaries", "يُفعّل عند تحويلات صغيرة متعددة لمستفيدين جدد.", "Triggers on many small transfers to new beneficiaries.", "غسل أموال", "AML", "ACTIVE", "HIGH", "REVIEW", 30),
+    r("FR-063", "تحويل بعد إعادة تعيين كلمة المرور", "Transfer after password reset", "يُفعّل عند التحويل بعد إعادة تعيين كلمة المرور مباشرة.", "Triggers when a transfer follows a recent password reset.", "المصادقة", "Authentication", "ACTIVE", "HIGH", "REVIEW", 28),
+    r("FR-070", "شذوذ في صرف القروض", "Loan disbursement anomaly", "يراقب أنماط صرف القروض غير المعتادة.", "Monitors unusual loan disbursement patterns.", "القروض", "Lending", "MONITORING", "MEDIUM", "MONITOR", 18),
+    r("FR-075", "تحويل دولي عالي القيمة", "High-value international transfer", "يراجع التحويلات الدولية عالية القيمة.", "Reviews high-value international transfers.", "المستفيد", "Beneficiary", "ACTIVE", "MEDIUM", "REVIEW", 22, 20000),
+    r("FR-081", "فشل التحقق الثنائي", "MFA failure", "يُفعّل عند فشل التحقق الثنائي قبل العملية.", "Triggers when MFA fails before the transaction.", "المصادقة", "Authentication", "ACTIVE", "HIGH", "REVIEW", 30),
   ];
 }
 
-// ---- Reference data pools ----------------------------------------------------
+// ---- Reference pools ---------------------------------------------------------
 
-const AR_FIRST = [
-  "محمد", "أحمد", "عبدالله", "خالد", "سعد", "فيصل", "نورة", "سارة", "ريم",
-  "لطيفة", "هند", "عبدالعزيز", "بندر", "ماجد", "تركي", "أمل", "منى", "دانة",
-  "يوسف", "عمر", "ناصر", "سلطان", "وليد", "غادة", "رغد",
-];
-const AR_LAST = [
-  "الشمري", "القحطاني", "العتيبي", "الغامدي", "الحربي", "الدوسري", "المطيري",
-  "الزهراني", "السبيعي", "البلوي", "العنزي", "الشهري", "الرشيدي", "المالكي",
-];
-const EN_FIRST = [
-  "Mohammed", "Ahmed", "Abdullah", "Khalid", "Saad", "Faisal", "Noura", "Sara",
-  "Reem", "Latifah", "Hind", "Abdulaziz", "Bandar", "Majed", "Turki", "Amal",
-  "Mona", "Dana", "Youssef", "Omar", "Nasser", "Sultan", "Waleed", "Ghada", "Raghad",
-];
-const EN_LAST = [
-  "Al-Shammari", "Al-Qahtani", "Al-Otaibi", "Al-Ghamdi", "Al-Harbi", "Al-Dosari",
-  "Al-Mutairi", "Al-Zahrani", "Al-Subaie", "Al-Balawi", "Al-Anazi", "Al-Shehri",
-  "Al-Rashidi", "Al-Maliki",
-];
-const CITIES: [string, string][] = [
-  ["الرياض", "Riyadh"], ["جدة", "Jeddah"], ["الدمام", "Dammam"],
-  ["مكة", "Makkah"], ["المدينة", "Madinah"], ["الخبر", "Khobar"],
-  ["أبها", "Abha"], ["تبوك", "Tabuk"], ["الطائف", "Taif"], ["بريدة", "Buraidah"],
-];
-const BANKS: [string, string][] = [
-  ["الراجحي", "Al Rajhi Bank"], ["الأهلي", "SNB"], ["الرياض", "Riyad Bank"],
-  ["ساب", "SABB"], ["البلاد", "Bank Albilad"], ["الإنماء", "Alinma Bank"],
-  ["الجزيرة", "Bank Aljazira"], ["Wise", "Wise (Intl)"], ["Revolut", "Revolut (Intl)"],
-];
+const AR_FIRST = ["محمد","أحمد","عبدالله","خالد","سعد","فيصل","نورة","سارة","ريم","لطيفة","هند","عبدالعزيز","بندر","ماجد","تركي","أمل","منى","دانة","يوسف","عمر","ناصر","سلطان","وليد","غادة","رغد","لمياء","فهد","مشعل","سلمى","جواهر"];
+const AR_LAST = ["الشمري","القحطاني","العتيبي","الغامدي","الحربي","الدوسري","المطيري","الزهراني","السبيعي","البلوي","العنزي","الشهري","الرشيدي","المالكي","الحارثي","العمري"];
+const EN_FIRST = ["Mohammed","Ahmed","Abdullah","Khalid","Saad","Faisal","Noura","Sara","Reem","Latifah","Hind","Abdulaziz","Bandar","Majed","Turki","Amal","Mona","Dana","Youssef","Omar","Nasser","Sultan","Waleed","Ghada","Raghad","Lamia","Fahad","Mishal","Salma","Jawaher"];
+const EN_LAST = ["Al-Shammari","Al-Qahtani","Al-Otaibi","Al-Ghamdi","Al-Harbi","Al-Dosari","Al-Mutairi","Al-Zahrani","Al-Subaie","Al-Balawi","Al-Anazi","Al-Shehri","Al-Rashidi","Al-Maliki","Al-Harthy","Al-Omari"];
+const REGIONS: Region[] = ["RIYADH","MAKKAH","EASTERN","MADINAH","QASSIM","ASIR"];
+const REGION_CITY: Record<Region, [string, string]> = {
+  RIYADH: ["الرياض","Riyadh"], MAKKAH: ["جدة","Jeddah"], EASTERN: ["الدمام","Dammam"],
+  MADINAH: ["المدينة","Madinah"], QASSIM: ["بريدة","Buraidah"], ASIR: ["أبها","Abha"],
+};
+const BANKS = ["Al Rajhi Bank","SNB","Riyad Bank","SABB","Bank Albilad","Alinma Bank","Bank Aljazira","Wise (Intl)","Revolut (Intl)"];
 
-// ---- Customers ---------------------------------------------------------------
-
-const SEGMENTS = ["RETAIL", "PREMIER", "PRIVATE", "SME", "CORPORATE"] as const;
+const SEGMENTS: CustomerSegment[] = ["RETAIL","SME","PREMIUM","NEW_CUSTOMER","LONG_TERM_CUSTOMER","HIGH_VALUE_CUSTOMER"];
+const SEG_AVG: Record<CustomerSegment, number> = {
+  RETAIL: 2600, SME: 15000, PREMIUM: 9000, NEW_CUSTOMER: 1800, LONG_TERM_CUSTOMER: 6000, HIGH_VALUE_CUSTOMER: 42000,
+};
 
 export function buildCustomers(rng: Rng): Customer[] {
   const out: Customer[] = [];
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 150; i++) {
     const fi = rng.int(0, AR_FIRST.length - 1);
     const li = rng.int(0, AR_LAST.length - 1);
-    const ci = rng.int(0, CITIES.length - 1);
-    const segment = rng.weighted(SEGMENTS, [50, 22, 10, 12, 6]);
-    const avgBase =
-      segment === "RETAIL" ? 2600 :
-      segment === "PREMIER" ? 6200 :
-      segment === "PRIVATE" ? 18000 :
-      segment === "SME" ? 9000 : 24000;
+    const region = rng.pick(REGIONS);
+    const segment = rng.weighted(SEGMENTS, [42, 16, 14, 10, 12, 6]);
+    const avgBase = SEG_AVG[segment];
+    const age =
+      segment === "NEW_CUSTOMER" ? rng.int(1, 6) :
+      segment === "LONG_TERM_CUSTOMER" ? rng.int(60, 140) :
+      segment === "HIGH_VALUE_CUSTOMER" ? rng.int(36, 160) : rng.int(6, 96);
+    const avg = Math.round(avgBase * rng.range(0.75, 1.35));
+    const hs = rng.int(6, 11);
     out.push({
       id: `CUS-${8400 + i}`,
       name: `${AR_FIRST[fi]} ${AR_LAST[li]}`,
       nameEn: `${EN_FIRST[fi]} ${EN_LAST[li]}`,
       nationalIdMasked: `1${rng.int(0, 9)}••••••${rng.int(10, 99)}`,
       segment,
-      accountAgeMonths: rng.int(4, 96),
-      avgTxnAmount: Math.round(avgBase * rng.range(0.7, 1.4)),
-      txnCount30d: rng.int(6, 80),
-      homeCity: CITIES[ci][0],
-      homeCityEn: CITIES[ci][1],
-      trustScore: rng.int(58, 97),
+      accountAgeMonths: age,
+      avgTxnAmount: avg,
+      amountStdDev: Math.round(avg * rng.range(0.18, 0.4)),
+      txnCount30d: rng.int(6, 90),
+      homeCity: REGION_CITY[region][0],
+      homeCityEn: REGION_CITY[region][1],
+      region,
+      normalHourStart: hs,
+      normalHourEnd: rng.int(19, 23),
+      trustScore: segment === "NEW_CUSTOMER" ? rng.int(45, 70) : rng.int(62, 97),
     });
   }
   return out;
 }
 
-// ---- Devices -----------------------------------------------------------------
-
-const DEVICE_TYPES = ["MOBILE_IOS", "MOBILE_ANDROID", "DESKTOP", "TABLET"] as const;
-const DEVICE_LABELS: Record<string, string> = {
-  MOBILE_IOS: "iPhone",
-  MOBILE_ANDROID: "Android",
-  DESKTOP: "Desktop",
-  TABLET: "iPad",
-};
+const DEVICE_TYPES = ["MOBILE_IOS","MOBILE_ANDROID","DESKTOP","TABLET"] as const;
+const DEVICE_LABELS: Record<string, string> = { MOBILE_IOS: "iPhone", MOBILE_ANDROID: "Android", DESKTOP: "Desktop", TABLET: "iPad" };
 
 export function buildDevices(rng: Rng): Device[] {
   const out: Device[] = [];
-  // 15 trusted/known devices
-  for (let i = 0; i < 15; i++) {
+  // Learning-scenario device: semi-known, few transactions (so it starts moderate).
+  out.push({ id: LEARN_DEVICE_ID, type: "MOBILE_IOS", label: "iPhone ••LR", known: true, firstSeenDaysAgo: 40, txnCount: 4, trustScore: 52 });
+  for (let i = 0; i < 165; i++) {
     const t = rng.pick(DEVICE_TYPES);
-    const txn = rng.int(18, 140);
-    out.push({
-      id: `DEV-${1000 + i}`,
-      type: t,
-      label: `${DEVICE_LABELS[t]} ••${rng.int(10, 99)}`,
-      known: true,
-      firstSeenDaysAgo: rng.int(60, 900),
-      txnCount: txn,
-      trustScore: Math.min(98, 60 + Math.round(txn * 0.3)),
-    });
+    const txn = rng.int(15, 260);
+    out.push({ id: `DEV-${1000 + i}`, type: t, label: `${DEVICE_LABELS[t]} ••${rng.int(10, 99)}`, known: true, firstSeenDaysAgo: rng.int(45, 1100), txnCount: txn, trustScore: Math.min(98, 58 + Math.round(txn * 0.18)) });
   }
-  // 7 new/unknown devices
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 54; i++) {
     const t = rng.pick(DEVICE_TYPES);
-    out.push({
-      id: `DEV-${2000 + i}`,
-      type: t,
-      label: `${DEVICE_LABELS[t]} ••${rng.int(10, 99)}`,
-      known: false,
-      firstSeenDaysAgo: rng.int(0, 2),
-      txnCount: rng.int(0, 2),
-      trustScore: rng.int(8, 30),
-    });
+    out.push({ id: `DEV-${2000 + i}`, type: t, label: `${DEVICE_LABELS[t]} ••${rng.int(10, 99)}`, known: false, firstSeenDaysAgo: rng.int(0, 3), txnCount: rng.int(0, 3), trustScore: rng.int(6, 32) });
   }
   return out;
 }
 
-// ---- Beneficiaries -----------------------------------------------------------
-
-const BEN_TYPES = ["INTERNAL", "EXTERNAL", "INTERNATIONAL", "WALLET"] as const;
+const BEN_TYPES = ["INTERNAL","EXTERNAL","INTERNATIONAL","WALLET"] as const;
 
 export function buildBeneficiaries(rng: Rng): Beneficiary[] {
   const out: Beneficiary[] = [];
-  for (let i = 0; i < 17; i++) {
-    const b = rng.pick(BANKS);
+  // Learning-scenario beneficiary: new (no history) so its trust is learned.
+  out.push({ id: LEARN_BEN_ID, name: "شركة التوريدات المتحدة", nameEn: "United Supplies Co.", bank: "Al Rajhi Bank", type: "EXTERNAL", known: false, txnCount: 0, firstSeenDaysAgo: 2, trustScore: 22 });
+  for (let i = 0; i < 210; i++) {
     const fi = rng.int(0, AR_FIRST.length - 1);
-    const txn = rng.int(4, 40);
-    out.push({
-      id: `BEN-${500 + i}`,
-      name: `${AR_FIRST[fi]} ${rng.pick(AR_LAST)}`,
-      nameEn: `${EN_FIRST[fi]} ${rng.pick(EN_LAST)}`,
-      bank: b[1],
-      type: rng.weighted(BEN_TYPES, [40, 34, 12, 14]),
-      known: true,
-      txnCount: txn,
-      firstSeenDaysAgo: rng.int(40, 800),
-      trustScore: Math.min(96, 55 + Math.round(txn)),
-    });
+    const txn = rng.int(4, 60);
+    out.push({ id: `BEN-${500 + i}`, name: `${AR_FIRST[fi]} ${rng.pick(AR_LAST)}`, nameEn: `${EN_FIRST[fi]} ${rng.pick(EN_LAST)}`, bank: rng.pick(BANKS), type: rng.weighted(BEN_TYPES, [40, 34, 12, 14]), known: true, txnCount: txn, firstSeenDaysAgo: rng.int(40, 900), trustScore: Math.min(96, 52 + Math.round(txn)) });
   }
-  for (let i = 0; i < 8; i++) {
-    const b = rng.pick(BANKS);
+  for (let i = 0; i < 90; i++) {
     const fi = rng.int(0, AR_FIRST.length - 1);
-    out.push({
-      id: `BEN-${900 + i}`,
-      name: `${AR_FIRST[fi]} ${rng.pick(AR_LAST)}`,
-      nameEn: `${EN_FIRST[fi]} ${rng.pick(EN_LAST)}`,
-      bank: b[1],
-      type: rng.weighted(BEN_TYPES, [10, 30, 40, 20]),
-      known: false,
-      txnCount: rng.int(0, 1),
-      firstSeenDaysAgo: rng.int(0, 3),
-      trustScore: rng.int(6, 28),
-    });
+    out.push({ id: `BEN-${900 + i}`, name: `${AR_FIRST[fi]} ${rng.pick(AR_LAST)}`, nameEn: `${EN_FIRST[fi]} ${rng.pick(EN_LAST)}`, bank: rng.pick(BANKS), type: rng.weighted(BEN_TYPES, [10, 30, 40, 20]), known: false, txnCount: rng.int(0, 1), firstSeenDaysAgo: rng.int(0, 4), trustScore: rng.int(6, 28) });
   }
   return out;
 }
 
-const CHANNELS = ["MOBILE", "WEB", "POS", "ATM", "WALLET", "BRANCH"] as const;
+const CHANNELS: Channel[] = ["MOBILE_APP","WEB","POS","ATM","INTERNAL_TRANSFER","VIBAN_CREDIT","LOAN_REPAYMENT","LOAN_DISBURSEMENT","WALLET_TRANSFER"];
+const CATEGORIES: TxnCategory[] = ["TRANSFER","PAYMENT","SUPPLIER","SALARY","LOAN","PURCHASE","WALLET"];
 
-// ---- Legacy engine simulation (deliberately over-penalizing) -----------------
+// ---- Legacy engine (deliberately over-penalizes + misses some fraud) --------
 
 function legacyEvaluate(
-  amount: number,
-  customerAvg: number,
-  deviceKnown: boolean,
-  beneficiaryKnown: boolean,
-  failedLogins: number,
-  timeFamiliar: boolean,
-  locationFamiliar: boolean,
-  rules: FraudRule[],
+  amount: number, customerAvg: number, deviceKnown: boolean, beneficiaryKnown: boolean,
+  failedLogins: number, timeFamiliar: boolean, locationFamiliar: boolean, rules: FraudRule[],
+  forceMiss: boolean,
 ): { score: number; decision: Transaction["originalDecision"] } {
-  let score = 18;
+  let score = 16;
   for (const r of rules) score += r.weight * 0.9;
   const ratio = amount / Math.max(customerAvg, 1);
-  if (ratio > 1.2) score += Math.min(28, (ratio - 1) * 26);
+  if (ratio > 1.2) score += Math.min(30, (ratio - 1) * 26);
   if (!deviceKnown) score += 12;
   if (!beneficiaryKnown) score += 10;
-  score += Math.min(failedLogins, 5) * 5;
+  score += Math.min(failedLogins, 6) * 5;
   if (!timeFamiliar) score += 8;
   if (!locationFamiliar) score += 9;
-  score = Math.max(4, Math.min(99, Math.round(score)));
-
+  score = Math.max(3, Math.min(99, Math.round(score)));
+  // False negatives: legacy misses structuring / low-amount fraud → approves.
+  if (forceMiss) return { score: Math.min(score, 30), decision: "APPROVE" };
   const hasReject = rules.some((r) => r.action === "REJECT");
   const hasReview = rules.some((r) => r.action === "REVIEW");
   let decision: Transaction["originalDecision"];
-  if (score >= 78 || (hasReject && score >= 62)) decision = "REJECT";
-  else if (score >= 58 || hasReview) decision = "REVIEW";
+  if (score >= 78 || (hasReject && score >= 60)) decision = "REJECT";
+  else if (score >= 56 || hasReview) decision = "REVIEW";
   else if (score >= 38) decision = "MONITOR";
   else decision = "APPROVE";
   return { score, decision };
 }
 
-// ---- Scenario blueprint ------------------------------------------------------
-
-interface ScenarioSignals {
-  deviceKnown: boolean;
-  beneficiaryKnown: boolean;
-  mfaPassed: boolean;
-  failedLogins: number;
-  velocity1h: number;
-  timeFamiliar: boolean;
-  locationFamiliar: boolean;
-  amountRatio: [number, number];
-  ruleIds: string[];
-  isActuallyFraud: boolean;
-  similarLegit: number;
-  similarFraud: number;
+interface Signals {
+  deviceKnown: boolean; beneficiaryKnown: boolean; mfaPassed: boolean; failedLogins: number;
+  velocity1h: number; timeFamiliar: boolean; locationFamiliar: boolean; passwordReset: boolean;
+  amountRatio: [number, number]; ruleIds: string[]; isFraud: boolean; forceMiss: boolean;
+  sharedDevice?: boolean;
 }
 
-function scenarioSignals(scenario: ScenarioType, rng: Rng): ScenarioSignals {
-  switch (scenario) {
+function scenarioSignals(s: ScenarioType, rng: Rng): Signals {
+  switch (s) {
     case "FALSE_POSITIVE":
-      return {
-        deviceKnown: true, beneficiaryKnown: true, mfaPassed: true,
-        failedLogins: 0, velocity1h: rng.int(1, 2), timeFamiliar: false,
-        locationFamiliar: true, amountRatio: [1.3, 2.1],
-        ruleIds: rng.pick([["FR-017", "FR-024"], ["FR-017"], ["FR-024", "FR-011"]]),
-        isActuallyFraud: false, similarLegit: rng.int(2, 6), similarFraud: 0,
-      };
+      return { deviceKnown: true, beneficiaryKnown: true, mfaPassed: true, failedLogins: 0, velocity1h: rng.int(1, 2), timeFamiliar: false, locationFamiliar: true, passwordReset: false, amountRatio: [1.3, 2.2], ruleIds: rng.pick([["FR-017", "FR-024"], ["FR-017"], ["FR-024", "FR-011"]]), isFraud: false, forceMiss: false };
     case "CONFIRMED_FRAUD":
-      return {
-        deviceKnown: false, beneficiaryKnown: false,
-        mfaPassed: rng.chance(0.4), failedLogins: rng.int(1, 4),
-        velocity1h: rng.int(5, 9), timeFamiliar: false, locationFamiliar: false,
-        amountRatio: [1.8, 3.2],
-        ruleIds: rng.pick([["FR-028", "FR-033", "FR-019"], ["FR-031", "FR-033"], ["FR-019", "FR-028"]]),
-        isActuallyFraud: true, similarLegit: 0, similarFraud: rng.int(1, 3),
-      };
+      return { deviceKnown: false, beneficiaryKnown: false, mfaPassed: rng.chance(0.35), failedLogins: rng.int(2, 7), velocity1h: rng.int(5, 10), timeFamiliar: false, locationFamiliar: false, passwordReset: rng.chance(0.5), amountRatio: [1.8, 3.4], ruleIds: rng.pick([["FR-028", "FR-033", "FR-019"], ["FR-031", "FR-033"], ["FR-063", "FR-081"]]), isFraud: true, forceMiss: false };
+    case "FALSE_NEGATIVE":
+      return { deviceKnown: false, beneficiaryKnown: false, mfaPassed: true, failedLogins: 0, velocity1h: rng.int(6, 11), timeFamiliar: true, locationFamiliar: true, passwordReset: false, amountRatio: [0.15, 0.5], ruleIds: rng.chance(0.5) ? ["FR-058"] : [], isFraud: true, forceMiss: true, sharedDevice: true };
     case "LOW_RISK":
-      return {
-        deviceKnown: true, beneficiaryKnown: true, mfaPassed: true,
-        failedLogins: 0, velocity1h: 1, timeFamiliar: true, locationFamiliar: true,
-        amountRatio: [0.4, 1.05], ruleIds: [],
-        isActuallyFraud: false, similarLegit: rng.int(3, 8), similarFraud: 0,
-      };
+      return { deviceKnown: true, beneficiaryKnown: true, mfaPassed: true, failedLogins: 0, velocity1h: 1, timeFamiliar: true, locationFamiliar: true, passwordReset: false, amountRatio: [0.4, 1.05], ruleIds: [], isFraud: false, forceMiss: false };
     case "AMBIGUOUS":
-      return {
-        deviceKnown: true, beneficiaryKnown: false, mfaPassed: true,
-        failedLogins: 0, velocity1h: rng.int(1, 3), timeFamiliar: rng.chance(0.5),
-        locationFamiliar: true, amountRatio: [1.2, 1.7],
-        ruleIds: rng.pick([["FR-031"], ["FR-023"], ["FR-031", "FR-047"]]),
-        isActuallyFraud: rng.chance(0.15), similarLegit: rng.int(0, 2), similarFraud: 0,
-      };
+      return { deviceKnown: true, beneficiaryKnown: false, mfaPassed: true, failedLogins: 0, velocity1h: rng.int(1, 3), timeFamiliar: rng.chance(0.5), locationFamiliar: true, passwordReset: false, amountRatio: [1.2, 1.7], ruleIds: rng.pick([["FR-031"], ["FR-023"], ["FR-031", "FR-047"]]), isFraud: rng.chance(0.06), forceMiss: false };
     case "RULE_FAILURE":
-      return {
-        deviceKnown: true, beneficiaryKnown: true, mfaPassed: true,
-        failedLogins: 0, velocity1h: 1, timeFamiliar: true, locationFamiliar: true,
-        amountRatio: [1.9, 2.8], ruleIds: rng.pick([["FR-011", "FR-017"], ["FR-017"]]),
-        isActuallyFraud: false, similarLegit: rng.int(4, 9), similarFraud: 0,
-      };
-    default: // NORMAL
-      return {
-        deviceKnown: rng.chance(0.85), beneficiaryKnown: rng.chance(0.8),
-        mfaPassed: rng.chance(0.95), failedLogins: rng.chance(0.1) ? 1 : 0,
-        velocity1h: rng.int(1, 3), timeFamiliar: rng.chance(0.8),
-        locationFamiliar: rng.chance(0.85), amountRatio: [0.5, 1.3],
-        ruleIds: rng.chance(0.3) ? [rng.pick(["FR-042", "FR-047", "FR-011"])] : [],
-        isActuallyFraud: rng.chance(0.04), similarLegit: rng.int(1, 5), similarFraud: 0,
-      };
+      return { deviceKnown: true, beneficiaryKnown: true, mfaPassed: true, failedLogins: 0, velocity1h: 1, timeFamiliar: true, locationFamiliar: true, passwordReset: false, amountRatio: [1.9, 3.0], ruleIds: rng.pick([["FR-031"], ["FR-011", "FR-031"]]), isFraud: false, forceMiss: false };
+    default:
+      return { deviceKnown: rng.chance(0.9), beneficiaryKnown: rng.chance(0.85), mfaPassed: rng.chance(0.97), failedLogins: rng.chance(0.08) ? 1 : 0, velocity1h: rng.int(1, 3), timeFamiliar: rng.chance(0.85), locationFamiliar: rng.chance(0.9), passwordReset: false, amountRatio: [0.5, 1.25], ruleIds: rng.chance(0.22) ? [rng.pick(["FR-042", "FR-047", "FR-011"])] : [], isFraud: rng.chance(0.012), forceMiss: false };
   }
 }
 
-// Hero transactions (fixed, referenced by Demo Story) followed by generated mix.
-const SCENARIO_PLAN: ScenarioType[] = [
-  ...Array<ScenarioType>(34).fill("FALSE_POSITIVE"),
-  ...Array<ScenarioType>(16).fill("CONFIRMED_FRAUD"),
-  ...Array<ScenarioType>(34).fill("LOW_RISK"),
-  ...Array<ScenarioType>(16).fill("AMBIGUOUS"),
-  ...Array<ScenarioType>(10).fill("RULE_FAILURE"),
-  ...Array<ScenarioType>(12).fill("NORMAL"),
-];
+// scenario plan for the ~1490 generated (non-demo) transactions
+function scenarioPlan(): ScenarioType[] {
+  const push = (s: ScenarioType, n: number) => Array<ScenarioType>(n).fill(s);
+  return [
+    ...push("LOW_RISK", 762),
+    ...push("NORMAL", 320),
+    ...push("FALSE_POSITIVE", 210),
+    ...push("AMBIGUOUS", 90),
+    ...push("RULE_FAILURE", 45),
+    ...push("CONFIRMED_FRAUD", 40),
+    ...push("FALSE_NEGATIVE", 25),
+  ];
+}
 
-export const HERO_IDS = {
-  falsePositive: "TX-2026-000145",
-  confirmedFraud: "TX-2026-000212",
-  lowRisk: "TX-2026-000078",
-  ambiguous: "TX-2026-000301",
-  ruleFailure: "TX-2026-000356",
-};
+function pickCategory(channel: Channel, rng: Rng): TxnCategory {
+  if (channel === "LOAN_DISBURSEMENT" || channel === "LOAN_REPAYMENT") return "LOAN";
+  if (channel === "WALLET_TRANSFER") return "WALLET";
+  if (channel === "POS") return "PURCHASE";
+  return rng.pick(CATEGORIES);
+}
+
+function outcomeFor(isFraud: boolean, scenario: ScenarioType, labeled: boolean, rng: Rng): InvestigationOutcome | undefined {
+  if (!labeled) return undefined;
+  if (isFraud) return "CONFIRMED_FRAUD";
+  if (scenario === "AMBIGUOUS" && rng.chance(0.35)) return "INCONCLUSIVE";
+  return "LEGITIMATE";
+}
 
 export function buildRawTransactions(
-  rng: Rng,
-  customers: Customer[],
-  devices: Device[],
-  beneficiaries: Beneficiary[],
-  rules: FraudRule[],
+  rng: Rng, customers: Customer[], devices: Device[], beneficiaries: Beneficiary[], rules: FraudRule[],
 ): Transaction[] {
   const ruleById = new Map(rules.map((r) => [r.id, r]));
-  const knownDevices = devices.filter((d) => d.known);
+  const knownDevices = devices.filter((d) => d.known && d.id !== LEARN_DEVICE_ID);
   const newDevices = devices.filter((d) => !d.known);
   const knownBens = beneficiaries.filter((b) => b.known);
   const newBens = beneficiaries.filter((b) => !b.known);
 
-  // Order the plan so hero scenarios come first with fixed IDs, then shuffle rest deterministically.
-  const plan = [
-    "FALSE_POSITIVE", "CONFIRMED_FRAUD", "LOW_RISK", "AMBIGUOUS", "RULE_FAILURE",
-    ...deterministicShuffle(SCENARIO_PLAN, rng),
-  ] as ScenarioType[];
-
-  const heroMap: Record<number, string> = {
-    0: HERO_IDS.falsePositive,
-    1: HERO_IDS.confirmedFraud,
-    2: HERO_IDS.lowRisk,
-    3: HERO_IDS.ambiguous,
-    4: HERO_IDS.ruleFailure,
-  };
-
   const out: Transaction[] = [];
+
+  // --- fixed demo transactions ---
+  out.push(...demoTransactions(customers, devices, beneficiaries));
+
+  const plan = deterministicShuffle(scenarioPlan(), rng);
   let seq = 1;
-  for (let idx = 0; idx < plan.length; idx++) {
-    const scenario = plan[idx];
+  for (let i = 0; i < plan.length; i++) {
+    const scenario = plan[i];
     const s = scenarioSignals(scenario, rng);
     const customer =
-      scenario === "RULE_FAILURE"
-        ? pickTenured(customers, rng)
-        : rng.pick(customers);
-
+      scenario === "RULE_FAILURE" ? pickSeg(customers, ["SME", "LONG_TERM_CUSTOMER", "HIGH_VALUE_CUSTOMER"], rng)
+      : rng.pick(customers);
     const device = s.deviceKnown ? rng.pick(knownDevices) : rng.pick(newDevices);
     const beneficiary = s.beneficiaryKnown ? rng.pick(knownBens) : rng.pick(newBens);
     const triggered = s.ruleIds.map((id) => ruleById.get(id)!).filter(Boolean);
-
-    const amount = Math.round(
-      customer.avgTxnAmount * rng.range(s.amountRatio[0], s.amountRatio[1]) / 10,
-    ) * 10;
-
-    const daysAgo = rng.int(0, 89);
-    const hour = s.timeFamiliar ? rng.int(9, 20) : rng.pick([1, 2, 3, 4, 23, 0]);
+    const amount = Math.max(50, Math.round(customer.avgTxnAmount * rng.range(s.amountRatio[0], s.amountRatio[1]) / 10) * 10);
+    const daysAgo = rng.int(0, 179);
+    const hour = s.timeFamiliar ? rng.int(customer.normalHourStart, customer.normalHourEnd) : rng.pick([1, 2, 3, 4, 23, 0]);
     const ts = daysAgo * DAY + (24 - hour) * 3600000 + rng.int(0, 59) * 60000;
-
-    const legacy = legacyEvaluate(
-      amount, customer.avgTxnAmount, s.deviceKnown, s.beneficiaryKnown,
-      s.failedLogins, s.timeFamiliar, s.locationFamiliar, triggered,
-    );
-
-    const id = heroMap[idx] ?? `TX-2026-${String(700 + seq).padStart(6, "0")}`;
-    if (!heroMap[idx]) seq++;
-
+    const legacy = legacyEvaluate(amount, customer.avgTxnAmount, s.deviceKnown, s.beneficiaryKnown, s.failedLogins, s.timeFamiliar, s.locationFamiliar, triggered, s.forceMiss);
+    const channel = pickChannel(scenario, rng);
+    const labeled = rng.chance(0.67); // ~1000 labeled outcomes
     out.push({
-      id,
-      customerId: customer.id,
-      amount,
-      currency: "SAR",
-      channel: pickChannel(scenario, rng),
-      deviceId: device.id,
-      beneficiaryId: beneficiary.id,
-      timestamp: iso(ts),
-      hour,
-      originalDecision: legacy.decision,
-      originalRiskScore: legacy.score,
-      triggeredRuleIds: triggered.map((r) => r.id),
-      mfaPassed: s.mfaPassed,
-      failedLogins: s.failedLogins,
-      velocity1h: s.velocity1h,
-      locationFamiliar: s.locationFamiliar,
-      timeFamiliar: s.timeFamiliar,
-      isActuallyFraud: s.isActuallyFraud,
-      scenario,
-      processingTimeMs: 0, // filled from scoring during enrichment
+      id: `TX-2026-${String(1000 + seq++).padStart(6, "0")}`,
+      customerId: customer.id, amount, currency: "SAR", channel, category: pickCategory(channel, rng),
+      deviceId: device.id, beneficiaryId: beneficiary.id, region: customer.region,
+      timestamp: iso(ts), hour, originalDecision: legacy.decision, originalRiskScore: legacy.score,
+      triggeredRuleIds: triggered.map((r) => r.id), mfaPassed: s.mfaPassed, failedLogins: s.failedLogins,
+      velocity1h: s.velocity1h, passwordResetRecently: s.passwordReset, locationFamiliar: s.locationFamiliar,
+      timeFamiliar: s.timeFamiliar, isActuallyFraud: s.isFraud, outcome: outcomeFor(s.isFraud, scenario, labeled, rng),
+      scenario, processingTimeMs: 0,
     });
   }
   return out;
 }
 
-function pickChannel(scenario: ScenarioType, rng: Rng) {
-  if (scenario === "CONFIRMED_FRAUD") return rng.weighted(CHANNELS, [30, 30, 4, 6, 22, 2]);
-  return rng.weighted(CHANNELS, [42, 22, 12, 8, 12, 4]);
+function pickChannel(scenario: ScenarioType, rng: Rng): Channel {
+  if (scenario === "CONFIRMED_FRAUD" || scenario === "FALSE_NEGATIVE")
+    return rng.weighted(CHANNELS, [26, 20, 3, 4, 16, 10, 2, 3, 16]);
+  return rng.weighted(CHANNELS, [34, 16, 12, 8, 12, 6, 5, 3, 4]);
 }
-
-function pickTenured(customers: Customer[], rng: Rng): Customer {
-  const tenured = customers.filter((c) => c.accountAgeMonths >= 36);
-  return tenured.length ? rng.pick(tenured) : rng.pick(customers);
+function pickSeg(customers: Customer[], segs: CustomerSegment[], rng: Rng): Customer {
+  const pool = customers.filter((c) => segs.includes(c.segment));
+  return pool.length ? rng.pick(pool) : rng.pick(customers);
 }
-
 function deterministicShuffle<T>(arr: readonly T[], rng: Rng): T[] {
   const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = rng.int(0, i);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
+  for (let i = a.length - 1; i > 0; i--) { const j = rng.int(0, i); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
 
-// ---- Enrichment (run the scoring engine) -------------------------------------
+// ---- Fixed demo transactions -------------------------------------------------
 
-export function toScoringInput(
-  t: Transaction,
-  customer: Customer,
-  device: Device,
-  beneficiary: Beneficiary,
-  rules: FraudRule[],
-): ScoringInput {
-  const triggered = rules.filter((r) => t.triggeredRuleIds.includes(r.id));
-  const s = scenarioSignalsFrom(t);
-  return {
-    originalRiskScore: t.originalRiskScore,
-    amount: t.amount,
-    customerAvgAmount: customer.avgTxnAmount,
-    deviceKnown: device.known,
-    deviceAgeDays: device.firstSeenDaysAgo,
-    deviceTxnCount: device.txnCount,
-    beneficiaryKnown: beneficiary.known,
-    beneficiaryTxnCount: beneficiary.txnCount,
-    accountAgeMonths: customer.accountAgeMonths,
-    velocity1h: t.velocity1h,
-    failedLogins: t.failedLogins,
-    mfaPassed: t.mfaPassed,
-    locationFamiliar: t.locationFamiliar,
-    timeFamiliar: t.timeFamiliar,
-    historicalFraudCount: s.histFraud,
-    historicalLegitCount: s.histLegit,
-    triggeredRuleSeverities: triggered.map((r) => r.severity),
-    similarLegitOutcomes: s.similarLegit,
-    similarFraudOutcomes: s.similarFraud,
-  };
-}
+function demoTransactions(customers: Customer[], devices: Device[], beneficiaries: Beneficiary[]): Transaction[] {
+  const premium = customers.find((c) => c.segment === "HIGH_VALUE_CUSTOMER") ?? customers.find((c) => c.segment === "LONG_TERM_CUSTOMER") ?? customers[0];
+  const sme = customers.find((c) => c.segment === "SME") ?? customers[1];
+  const retails = customers.filter((c) => c.segment === "RETAIL");
+  // distinct customers so one demo's fraud doesn't pollute another's history
+  const fraudCust = retails[0] ?? customers[2];
+  const lowCust = retails[1] ?? customers[3];
+  const fnCust = retails[2] ?? customers[4];
+  const learnCust = customers.find((c) => c.segment === "NEW_CUSTOMER") ?? retails[3] ?? customers[5];
+  const trusted = devices.find((d) => d.known && d.txnCount > 100) ?? devices[1];
+  const trusted2 = devices.find((d) => d.known && d.id !== trusted.id && d.txnCount > 60) ?? devices[2];
+  const newDev = devices.find((d) => !d.known)!;
+  const newDev2 = devices.find((d) => !d.known && d.id !== newDev.id)!;
+  const knownBen = beneficiaries.find((b) => b.known && b.txnCount > 15) ?? beneficiaries[0];
+  const newBen = beneficiaries.find((b) => !b.known && b.id !== LEARN_BEN_ID)!;
+  const newBen2 = beneficiaries.find((b) => !b.known && b.id !== newBen.id && b.id !== LEARN_BEN_ID)!;
+  const learnDev = devices.find((d) => d.id === LEARN_DEVICE_ID)!;
+  const learnBen = beneficiaries.find((b) => b.id === LEARN_BEN_ID)!;
 
-// Derive history/similarity counts deterministically from the transaction.
-function scenarioSignalsFrom(t: Transaction) {
-  const seedFromId = [...t.id].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const histLegit =
-    t.scenario === "CONFIRMED_FRAUD" ? 2 :
-    t.scenario === "LOW_RISK" ? 30 + (seedFromId % 20) :
-    t.scenario === "RULE_FAILURE" ? 40 + (seedFromId % 25) :
-    12 + (seedFromId % 24);
-  const histFraud = t.isActuallyFraud ? (seedFromId % 2) : 0;
-  const similarLegit =
-    t.scenario === "CONFIRMED_FRAUD" ? 0 :
-    t.scenario === "AMBIGUOUS" ? seedFromId % 3 :
-    2 + (seedFromId % 5);
-  const similarFraud = t.isActuallyFraud ? 1 + (seedFromId % 3) : 0;
-  return { histLegit, histFraud, similarLegit, similarFraud };
-}
-
-export function enrich(
-  raw: Transaction[],
-  customers: Customer[],
-  devices: Device[],
-  beneficiaries: Beneficiary[],
-  rules: FraudRule[],
-): EnrichedTransaction[] {
-  const cMap = new Map(customers.map((c) => [c.id, c]));
-  const dMap = new Map(devices.map((d) => [d.id, d]));
-  const bMap = new Map(beneficiaries.map((b) => [b.id, b]));
-
-  return raw.map((t) => {
-    const customer = cMap.get(t.customerId)!;
-    const device = dMap.get(t.deviceId)!;
-    const beneficiary = bMap.get(t.beneficiaryId)!;
-    const input = toScoringInput(t, customer, device, beneficiary, rules);
-    const ai = scoreTransaction(input);
-    const legacyNegative =
-      t.originalDecision === "REJECT" || t.originalDecision === "REVIEW";
-    const aiPositive = ai.recommendation === "APPROVE" || ai.recommendation === "MONITOR";
-    const isFalsePositive = legacyNegative && aiPositive && !t.isActuallyFraud;
-    return {
-      ...t,
-      processingTimeMs: ai.processingTimeMs,
-      customer,
-      device,
-      beneficiary,
-      ai,
-      rules: rules.filter((r) => t.triggeredRuleIds.includes(r.id)),
-      isFalsePositive,
-    };
+  const t = (o: Partial<Transaction> & Pick<Transaction, "id" | "customerId" | "amount" | "deviceId" | "beneficiaryId" | "originalDecision" | "originalRiskScore" | "triggeredRuleIds" | "isActuallyFraud" | "scenario">): Transaction => ({
+    currency: "SAR", channel: "MOBILE_APP", category: "TRANSFER", region: "RIYADH", hour: 14,
+    timestamp: iso(2 * DAY), mfaPassed: true, failedLogins: 0, velocity1h: 1, passwordResetRecently: false,
+    locationFamiliar: true, timeFamiliar: true, processingTimeMs: 0, ...o,
   });
+
+  return [
+    t({ id: DEMO_IDS.falsePositive, customerId: premium.id, amount: 18500, deviceId: trusted.id, beneficiaryId: knownBen.id, region: premium.region, hour: 2, timeFamiliar: false, originalDecision: "REJECT", originalRiskScore: 86, triggeredRuleIds: ["FR-017", "FR-024"], isActuallyFraud: false, outcome: "LEGITIMATE", scenario: "FALSE_POSITIVE", category: "TRANSFER" }),
+    t({ id: DEMO_IDS.confirmedFraud, customerId: fraudCust.id, amount: 24900, deviceId: newDev.id, beneficiaryId: newBen.id, region: "ASIR", hour: 3, mfaPassed: false, failedLogins: 7, velocity1h: 9, passwordResetRecently: true, locationFamiliar: false, timeFamiliar: false, originalDecision: "REVIEW", originalRiskScore: 74, triggeredRuleIds: ["FR-019", "FR-033", "FR-063", "FR-081"], isActuallyFraud: true, outcome: "CONFIRMED_FRAUD", scenario: "CONFIRMED_FRAUD", channel: "WEB", category: "TRANSFER" }),
+    t({ id: DEMO_IDS.lowRisk, customerId: lowCust.id, amount: 420, deviceId: trusted2.id, beneficiaryId: knownBen.id, region: lowCust.region, hour: 13, originalDecision: "APPROVE", originalRiskScore: 12, triggeredRuleIds: [], isActuallyFraud: false, outcome: "LEGITIMATE", scenario: "LOW_RISK", channel: "POS", category: "PURCHASE" }),
+    t({ id: DEMO_IDS.review, customerId: premium.id, amount: 7900, deviceId: trusted.id, beneficiaryId: newBen2.id, region: premium.region, hour: 15, originalDecision: "REVIEW", originalRiskScore: 58, triggeredRuleIds: ["FR-031"], isActuallyFraud: false, outcome: undefined, scenario: "AMBIGUOUS", category: "TRANSFER" }),
+    t({ id: DEMO_IDS.ruleFailure, customerId: sme.id, amount: 52000, deviceId: trusted.id, beneficiaryId: newBen.id, region: sme.region, hour: 11, originalDecision: "REJECT", originalRiskScore: 82, triggeredRuleIds: ["FR-031"], isActuallyFraud: false, outcome: "LEGITIMATE", scenario: "RULE_FAILURE", channel: "INTERNAL_TRANSFER", category: "SUPPLIER" }),
+    t({ id: DEMO_IDS.falseNegative, customerId: fnCust.id, amount: 950, deviceId: newDev2.id, beneficiaryId: newBen2.id, region: "EASTERN", hour: 14, velocity1h: 9, originalDecision: "APPROVE", originalRiskScore: 26, triggeredRuleIds: ["FR-058"], isActuallyFraud: true, outcome: "CONFIRMED_FRAUD", scenario: "FALSE_NEGATIVE", channel: "WALLET_TRANSFER", category: "WALLET" }),
+    // learning pair — a NEW customer, a NEW beneficiary and a semi-known device,
+    // so it starts borderline; confirming LEARN-001 as legitimate lowers LEARN-002.
+    t({ id: DEMO_IDS.learn1, customerId: learnCust.id, amount: 4600, deviceId: learnDev.id, beneficiaryId: learnBen.id, region: learnCust.region, hour: 1, timeFamiliar: false, originalDecision: "REJECT", originalRiskScore: 72, triggeredRuleIds: ["FR-024", "FR-031"], isActuallyFraud: false, outcome: undefined, scenario: "FALSE_POSITIVE", category: "SUPPLIER", channel: "INTERNAL_TRANSFER" }),
+    t({ id: DEMO_IDS.learn2, customerId: learnCust.id, amount: 4800, deviceId: learnDev.id, beneficiaryId: learnBen.id, region: learnCust.region, hour: 1, timeFamiliar: false, originalDecision: "REJECT", originalRiskScore: 73, triggeredRuleIds: ["FR-024", "FR-031"], isActuallyFraud: false, outcome: undefined, scenario: "FALSE_POSITIVE", category: "SUPPLIER", channel: "INTERNAL_TRANSFER" }),
+  ];
 }
 
-// ---- Monthly metrics (12 months, deterministic upward trend) -----------------
+// ---- Monthly metrics (12 months) --------------------------------------------
 
-const MONTH_LABELS = [
-  "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر", "يناير",
-  "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو",
-];
-const MONTH_KEYS = [
-  "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01",
-  "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07",
-];
+const MONTH_LABELS = ["أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر","يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو"];
+const MONTH_KEYS = ["2025-08","2025-09","2025-10","2025-11","2025-12","2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07"];
 
 export function buildMonthlyMetrics(rng: Rng): MonthlyMetric[] {
   const out: MonthlyMetric[] = [];
   for (let i = 0; i < 12; i++) {
-    const p = i / 11; // 0..1 improvement progress
+    const p = i / 11;
     const total = 980000 + Math.round(p * 270000) + rng.int(-15000, 15000);
     const fpBefore = 2.6 - p * 0.1 + rng.range(-0.05, 0.05);
     const fpAfter = 2.45 - p * 1.28 + rng.range(-0.04, 0.04);
-    const recovered = Math.round(total * (fpBefore - fpAfter) / 100 * 0.62);
+    const recovered = Math.round((total * (fpBefore - fpAfter)) / 100 * 0.62);
     out.push({
-      month: MONTH_KEYS[i],
-      label: MONTH_LABELS[i],
-      totalTransactions: total,
-      fpRateBefore: +fpBefore.toFixed(2),
-      fpRateAfter: +Math.max(0.9, fpAfter).toFixed(2),
-      recoveredTransactions: recovered,
-      revenueRecovered: recovered * 140,
+      month: MONTH_KEYS[i], label: MONTH_LABELS[i], totalTransactions: total,
+      fpRateBefore: +fpBefore.toFixed(2), fpRateAfter: +Math.max(0.9, fpAfter).toFixed(2),
+      recoveredTransactions: recovered, revenueRecovered: recovered * 140,
       fraudPrevented: 2100000 + Math.round(p * 900000) + rng.int(-80000, 80000),
-      manualReviews: Math.round((24000 - p * 6000) + rng.int(-600, 600)),
+      manualReviews: Math.round(24000 - p * 6000 + rng.int(-600, 600)),
       manualReviewsReduced: Math.round(p * 6200 + rng.int(-200, 200)),
       customerFriction: +(48 - p * 22 + rng.range(-1, 1)).toFixed(1),
       accuracy: +(88 + p * 6 + rng.range(-0.6, 0.6)).toFixed(1),
       precision: +(83 + p * 8 + rng.range(-0.6, 0.6)).toFixed(1),
       recall: +(90 + p * 3.5 + rng.range(-0.5, 0.5)).toFixed(1),
       falseNegativeRate: +(2.4 - p * 0.9 + rng.range(-0.1, 0.1)).toFixed(2),
-      drift: +(Math.max(0, 0.22 - p * 0.14 + rng.range(-0.02, 0.03))).toFixed(3),
+      drift: +Math.max(0, 0.22 - p * 0.14 + rng.range(-0.02, 0.03)).toFixed(3),
     });
   }
   return out;
@@ -671,22 +394,21 @@ export function buildMonthlyMetrics(rng: Rng): MonthlyMetric[] {
 
 export function buildIntegrations(rng: Rng): Integration[] {
   const defs: [string, string, string, string, boolean][] = [
-    ["IBM Safer Payments", "IBM Safer Payments", "محرك احتيال", "Fraud Engine", true],
-    ["SAS Fraud Management", "SAS Fraud Management", "محرك احتيال", "Fraud Engine", true],
-    ["Feedzai", "Feedzai", "محرك احتيال", "Fraud Engine", false],
-    ["النظام البنكي الأساسي", "Core Banking", "أنظمة أساسية", "Core", true],
-    ["بوابة المدفوعات", "Payment Gateway", "مدفوعات", "Payments", true],
-    ["تطبيق الجوال", "Mobile App", "قنوات", "Channels", true],
-    ["المحفظة الرقمية", "Digital Wallet", "قنوات", "Channels", true],
-    ["منصة بيانات العملاء", "Customer Data Platform", "بيانات", "Data", true],
-    ["إدارة الحالات", "Case Management", "تحقيقات", "Investigations", true],
-    ["SIEM", "SIEM", "أمن", "Security", true],
-    ["Open Banking", "Open Banking", "مصرفية مفتوحة", "Open Banking", false],
-    ["نفاذ / مزود التحقق", "Nafath / MFA Provider", "مصادقة", "Authentication", true],
+    ["IBM Safer Payments","IBM Safer Payments","محرك احتيال","Fraud Engine",true],
+    ["SAS Fraud Management","SAS Fraud Management","محرك احتيال","Fraud Engine",true],
+    ["Feedzai","Feedzai","محرك احتيال","Fraud Engine",false],
+    ["النظام البنكي الأساسي","Core Banking","أنظمة أساسية","Core",true],
+    ["بوابة المدفوعات","Payment Gateway","مدفوعات","Payments",true],
+    ["تطبيق الجوال","Mobile App","قنوات","Channels",true],
+    ["المحفظة الرقمية","Digital Wallet","قنوات","Channels",true],
+    ["منصة بيانات العملاء","Customer Data Platform","بيانات","Data",true],
+    ["إدارة الحالات","Case Management","تحقيقات","Investigations",true],
+    ["SIEM","SIEM","أمن","Security",true],
+    ["Open Banking","Open Banking","مصرفية مفتوحة","Open Banking",false],
+    ["نفاذ / مزود التحقق","Nafath / MFA Provider","مصادقة","Authentication",true],
   ];
   return defs.map(([name, nameEn, category, categoryEn, connected], i) => ({
-    id: `INT-${100 + i}`,
-    name, nameEn, category, categoryEn, connected,
+    id: `INT-${100 + i}`, name, nameEn, category, categoryEn, connected,
     lastSync: connected ? iso(rng.int(1, 90) * 60000) : iso(rng.int(2, 20) * DAY),
     transactionsProcessed: connected ? rng.int(120000, 1600000) : 0,
     avgLatencyMs: connected ? rng.int(28, 140) : 0,
@@ -694,123 +416,26 @@ export function buildIntegrations(rng: Rng): Integration[] {
   }));
 }
 
-// ---- AI insights -------------------------------------------------------------
+// ---- AI insights (seed set; more are regenerated dynamically) ---------------
 
 export function buildInsights(rng: Rng): Insight[] {
-  const raw: Omit<Insight, "id" | "status" | "createdAt">[] = [
-    {
-      titleAr: "ارتفاع الرفض الخاطئ لعمليات المحفظة الرقمية بنسبة 14% هذا الأسبوع",
-      titleEn: "False positives up 14% for mobile wallet transactions this week",
-      category: "قنوات", categoryEn: "Channels", severity: "HIGH",
-      evidenceAr: "312 عملية محفظة سليمة تم رفضها مقابل 274 الأسبوع الماضي.",
-      evidenceEn: "312 legitimate wallet transactions rejected vs 274 last week.",
-      financialImpact: 168000, confidence: 88,
-      actionAr: "مراجعة عتبة القاعدة FR-031 لقناة المحفظة.",
-      actionEn: "Review FR-031 threshold for the wallet channel.",
-    },
-    {
-      titleAr: "القاعدة FR-024 مسؤولة عن 38% من رفض العمليات السليمة",
-      titleEn: "Rule FR-024 is responsible for 38% of rejected legitimate transactions",
-      category: "قواعد", categoryEn: "Rules", severity: "CRITICAL",
-      evidenceAr: "FR-024 سببت 4,010 رفض خاطئ باكتشاف 61 حالة احتيال فقط.",
-      evidenceEn: "FR-024 caused 4,010 false declines while catching only 61 fraud cases.",
-      financialImpact: 561000, confidence: 93,
-      actionAr: "تحويل الإجراء من رفض إلى مراجعة مع استثناء الجهاز الموثوق.",
-      actionEn: "Change action from Reject to Review with a trusted-device exception.",
-    },
-    {
-      titleAr: "عمليات الأجهزة الموثوقة أقل عرضة للاحتيال المؤكد بنسبة 94%",
-      titleEn: "Trusted-device transactions have a 94% lower confirmed-fraud rate",
-      category: "سلوك", categoryEn: "Behavior", severity: "MEDIUM",
-      evidenceAr: "معدل الاحتيال 0.03% على الأجهزة الموثوقة مقابل 0.51% للأجهزة الجديدة.",
-      evidenceEn: "0.03% fraud rate on trusted devices vs 0.51% on new devices.",
-      financialImpact: 240000, confidence: 90,
-      actionAr: "إضافة شرط الجهاز الموثوق كعامل تخفيف معتمد.",
-      actionEn: "Add trusted-device as an approved mitigating condition.",
-    },
-    {
-      titleAr: "العملاء الأقدم من 24 شهرًا يتعرضون لعقوبة مفرطة من القواعد الحالية",
-      titleEn: "Customers older than 24 months are over-penalized by current rules",
-      category: "شرائح", categoryEn: "Segments", severity: "HIGH",
-      evidenceAr: "معدل الرفض الخاطئ 3.1% لهذه الشريحة مقابل 1.2% للمتوسط.",
-      evidenceEn: "3.1% false-positive rate for this segment vs 1.2% average.",
-      financialImpact: 302000, confidence: 86,
-      actionAr: "إضافة استثناء السجل السلوكي للعملاء ذوي الأقدمية.",
-      actionEn: "Add a behavioral-history exception for tenured customers.",
-    },
-    {
-      titleAr: "يمكن خفض حجم المراجعة اليدوية بنسبة تقديرية 22%",
-      titleEn: "Manual review volume can be reduced by an estimated 22%",
-      category: "عمليات", categoryEn: "Operations", severity: "MEDIUM",
-      evidenceAr: "5,140 حالة مراجعة شهريًا يمكن أتمتتها بثقة تتجاوز 90%.",
-      evidenceEn: "5,140 monthly reviews can be automated with >90% confidence.",
-      financialImpact: 205600, confidence: 84,
-      actionAr: "تفعيل الموافقة الآلية للحالات عالية الثقة ضمن حدود الحوكمة.",
-      actionEn: "Enable auto-approval for high-confidence cases within governance limits.",
-    },
+  const base: Omit<Insight, "id" | "status" | "createdAt">[] = [
+    { titleAr: "القاعدة FR-031 تعاقب مدفوعات موردي المنشآت الصغيرة بإفراط", titleEn: "Rule FR-031 over-penalizes SME supplier payments", category: "قواعد", categoryEn: "Rules", severity: "CRITICAL", evidenceAr: "معظم رفض FR-031 لعملاء المنشآت الصغيرة كان سليمًا.", evidenceEn: "Most FR-031 rejections for SME customers were legitimate.", financialImpact: 0, actionAr: "إضافة استثناء لمدفوعات الموردين المعتمدة للمنشآت الصغيرة.", actionEn: "Add an exception for approved SME supplier payments.", confidence: 92 },
+    { titleAr: "عمليات الأجهزة الموثوقة أقل احتيالًا بفارق كبير", titleEn: "Trusted-device transactions have far lower fraud", category: "سلوك", categoryEn: "Behavior", severity: "MEDIUM", evidenceAr: "معدل الاحتيال على الأجهزة الموثوقة أقل بكثير من الأجهزة الجديدة.", evidenceEn: "Fraud rate on trusted devices is far below new devices.", financialImpact: 0, actionAr: "اعتماد الجهاز الموثوق كعامل تخفيف.", actionEn: "Adopt trusted-device as a mitigating factor.", confidence: 90 },
+    { titleAr: "العملاء القدامى يتعرضون لعقوبة مفرطة", titleEn: "Long-term customers are over-penalized", category: "شرائح", categoryEn: "Segments", severity: "HIGH", evidenceAr: "معدل الرفض الخاطئ لهذه الشريحة أعلى من المتوسط.", evidenceEn: "False-positive rate for this segment exceeds the average.", financialImpact: 0, actionAr: "إضافة استثناء السجل السلوكي للعملاء القدامى.", actionEn: "Add a behavioral-history exception for tenured customers.", confidence: 86 },
   ];
-
-  const extra = [
-    ["تركّز الرفض الخاطئ في ساعات الليل المتأخرة", "False positives cluster in late-night hours", "سلوك", "Behavior"],
-    ["ارتفاع طفيف في الانحراف على شريحة الشركات", "Slight drift detected on the corporate segment", "نموذج", "Model"],
-    ["المستفيدون الدوليون الجدد يمثلون فرصة تحسين", "New international beneficiaries are an optimization opportunity", "مستفيد", "Beneficiary"],
-    ["قناة نقاط البيع تُظهر دقة عالية ومستقرة", "POS channel shows high, stable precision", "قنوات", "Channels"],
-    ["تحسّن ثقة التوصيات بعد أحدث تغذية راجعة", "Recommendation confidence improved after latest feedback", "نموذج", "Model"],
-  ];
-  const sevs = ["LOW", "MEDIUM", "INFO", "LOW", "INFO"] as const;
-
-  const insights: Insight[] = raw.map((r, i) => ({
-    ...r,
-    id: `INS-${200 + i}`,
-    status: i === 0 ? "NEW" : i === 1 ? "REVIEWED" : "NEW",
-    createdAt: iso(rng.int(1, 20) * DAY),
-  }));
-
-  extra.forEach(([titleAr, titleEn, category, categoryEn], i) => {
-    insights.push({
-      id: `INS-${300 + i}`,
-      titleAr, titleEn, category, categoryEn,
-      severity: sevs[i],
-      evidenceAr: "بناءً على تحليل مجموعة البيانات التاريخية المجمّعة.",
-      evidenceEn: "Based on analysis of the aggregated historical dataset.",
-      financialImpact: rng.int(20000, 120000),
-      actionAr: "مراجعة التفاصيل واتخاذ الإجراء المناسب.",
-      actionEn: "Review details and take the appropriate action.",
-      confidence: rng.int(72, 92),
-      status: rng.pick(["NEW", "REVIEWED", "ACCEPTED", "DISMISSED"]),
-      createdAt: iso(rng.int(1, 28) * DAY),
-    });
-  });
-
-  // pad to 20
-  while (insights.length < 20) {
-    const i = insights.length;
-    insights.push({
-      id: `INS-${400 + i}`,
-      titleAr: "ملاحظة أداء دورية على مجموعة القواعد",
-      titleEn: "Periodic performance note on the rule set",
-      category: "قواعد", categoryEn: "Rules", severity: "INFO",
-      evidenceAr: "مراجعة دورية مجدولة لأداء القواعد.",
-      evidenceEn: "Scheduled periodic rule performance review.",
-      financialImpact: rng.int(10000, 60000),
-      actionAr: "لا يتطلب إجراءً فوريًا.",
-      actionEn: "No immediate action required.",
-      confidence: rng.int(70, 85),
-      status: "REVIEWED",
-      createdAt: iso(rng.int(5, 40) * DAY),
-    });
-  }
+  const insights: Insight[] = base.map((b, i) => ({ ...b, id: `INS-${200 + i}`, status: i === 0 ? "NEW" : "NEW", createdAt: iso(rng.int(1, 20) * DAY) }));
   return insights;
 }
 
-// ---- Top-level dataset -------------------------------------------------------
+// ---- Base dataset ------------------------------------------------------------
 
-export interface Dataset {
+export interface BaseDataset {
   customers: Customer[];
   devices: Device[];
   beneficiaries: Beneficiary[];
   rules: FraudRule[];
-  transactions: EnrichedTransaction[];
+  rawTransactions: Transaction[];
   insights: Insight[];
   metrics: MonthlyMetric[];
   integrations: Integration[];
@@ -818,16 +443,15 @@ export interface Dataset {
 
 export const SEED = 20260717;
 
-export function generateDataset(seed = SEED): Dataset {
+export function generateBase(seed = SEED): BaseDataset {
   const rng = new Rng(seed);
   const rules = buildRules();
   const customers = buildCustomers(rng);
   const devices = buildDevices(rng);
   const beneficiaries = buildBeneficiaries(rng);
-  const raw = buildRawTransactions(rng, customers, devices, beneficiaries, rules);
-  const transactions = enrich(raw, customers, devices, beneficiaries, rules);
+  const rawTransactions = buildRawTransactions(rng, customers, devices, beneficiaries, rules);
   const insights = buildInsights(rng);
   const metrics = buildMonthlyMetrics(rng);
   const integrations = buildIntegrations(rng);
-  return { customers, devices, beneficiaries, rules, transactions, insights, metrics, integrations };
+  return { customers, devices, beneficiaries, rules, rawTransactions, insights, metrics, integrations };
 }

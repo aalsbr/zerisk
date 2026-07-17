@@ -8,8 +8,8 @@
 // ============================================================================
 
 import "server-only";
-import { getDataset } from "./store";
-import { PORTFOLIO, computeRuleStats, sampleFalsePositives } from "./analytics";
+import { getDataset, getKpis } from "./store";
+import { computeRuleStats, sampleFalsePositives } from "./analytics";
 import { DECISION_LABEL, RULE_RECO_LABEL } from "./i18n";
 import { fmtCurrency, fmtNumber, fmtPercent } from "./format";
 import type { Lang } from "./format";
@@ -26,6 +26,7 @@ export function answerQuestion(question: string, lang: Lang): CopilotAnswer {
   const q = question.trim();
   const lower = q.toLowerCase();
   const ds = getDataset();
+  const k = getKpis();
   const stats = computeRuleStats(ds.transactions, ds.rules);
 
   // 1) Transaction lookup ("why was TX-... rejected / approved")
@@ -115,8 +116,8 @@ ${r.descriptionEn}
 
   // 5) How much can we recover
   if (/recover|money|revenue|استرداد|إيراد|مبلغ|كم/.test(lower)) {
-    const ar = `يمكن استرداد ما يقارب ${fmtNumber(PORTFOLIO.recoveredTransactions)} عملية سليمة شهريًا بقيمة تقديرية ${fmtCurrency(PORTFOLIO.revenueRecovered, "ar")}، مع توفير ${fmtCurrency(PORTFOLIO.investigationCostSaved, "ar")} في تكلفة المراجعة اليدوية.`;
-    const en = `We can recover about ${fmtNumber(PORTFOLIO.recoveredTransactions)} legitimate transactions per month worth an estimated ${fmtCurrency(PORTFOLIO.revenueRecovered, "en")}, plus ${fmtCurrency(PORTFOLIO.investigationCostSaved, "en")} in manual-review savings.`;
+    const ar = `يمكن استرداد ما يقارب ${fmtNumber(k.recoveredTransactions)} عملية سليمة شهريًا بقيمة تقديرية ${fmtCurrency(k.revenueRecovered, "ar")}، مع توفير ${fmtCurrency(k.operationalCostSaved, "ar")} في تكلفة المراجعة اليدوية.`;
+    const en = `We can recover about ${fmtNumber(k.recoveredTransactions)} legitimate transactions per month worth an estimated ${fmtCurrency(k.revenueRecovered, "en")}, plus ${fmtCurrency(k.operationalCostSaved, "en")} in manual-review savings.`;
     return { answer: A(ar, en, lang), followups: followupsFor("value", lang), sources: ["analytics/summary"] };
   }
 
@@ -136,8 +137,8 @@ ${r.descriptionEn}
   // 7) Summarize today's activity / executive summary
   if (/summar|today|activity|executive|لخّص|لخص|اليوم|نشاط|تنفيذي/.test(lower)) {
     const fpCount = sampleFalsePositives(ds.transactions).length;
-    const ar = `ملخص النشاط: تمت معالجة عيّنة من ${fmtNumber(ds.transactions.length)} عملية. اكتشفت المنصة ${fmtNumber(fpCount)} عملية رفض خاطئ ضمن العيّنة، ويُقدَّر على مستوى المحفظة استرداد ${fmtCurrency(PORTFOLIO.revenueRecovered, "ar")} شهريًا مع خفض معدل الرفض الخاطئ من ${fmtPercent(PORTFOLIO.fpRateBefore, 2)} إلى ${fmtPercent(PORTFOLIO.fpRateAfter, 2)} والحفاظ على اكتشاف الاحتيال ضمن الحدود المعتمدة.`;
-    const en = `Activity summary: processed a sample of ${fmtNumber(ds.transactions.length)} transactions. The platform flagged ${fmtNumber(fpCount)} false positives in the sample; at portfolio scale it recovers an estimated ${fmtCurrency(PORTFOLIO.revenueRecovered, "en")} monthly while cutting the false-positive rate from ${fmtPercent(PORTFOLIO.fpRateBefore, 2)} to ${fmtPercent(PORTFOLIO.fpRateAfter, 2)} and keeping fraud detection within approved limits.`;
+    const ar = `ملخص النشاط: تمت معالجة عيّنة من ${fmtNumber(ds.transactions.length)} عملية. اكتشفت المنصة ${fmtNumber(fpCount)} عملية رفض خاطئ ضمن العيّنة، ويُقدَّر على مستوى المحفظة استرداد ${fmtCurrency(k.revenueRecovered, "ar")} شهريًا مع خفض معدل الرفض الخاطئ من ${fmtPercent(k.fpRateBefore, 2)} إلى ${fmtPercent(k.fpRateAfter, 2)} والحفاظ على اكتشاف الاحتيال ضمن الحدود المعتمدة.`;
+    const en = `Activity summary: processed a sample of ${fmtNumber(ds.transactions.length)} transactions. The platform flagged ${fmtNumber(fpCount)} false positives in the sample; at portfolio scale it recovers an estimated ${fmtCurrency(k.revenueRecovered, "en")} monthly while cutting the false-positive rate from ${fmtPercent(k.fpRateBefore, 2)} to ${fmtPercent(k.fpRateAfter, 2)} and keeping fraud detection within approved limits.`;
     return { answer: A(ar, en, lang), followups: followupsFor("value", lang), sources: ["analytics/summary"] };
   }
 

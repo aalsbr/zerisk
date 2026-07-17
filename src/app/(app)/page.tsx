@@ -1,6 +1,5 @@
-import { getDataset } from "@/lib/store";
+import { getDataset, getKpis } from "@/lib/store";
 import {
-  PORTFOLIO,
   countByDecision,
   riskLevelDistribution,
   computeRuleStats,
@@ -9,6 +8,7 @@ import { DashboardView } from "@/components/pages/dashboard-view";
 
 export default function DashboardPage() {
   const { transactions, metrics, rules } = getDataset();
+  const k = getKpis();
 
   const original = countByDecision(transactions, "originalDecision");
   const ai = countByDecision(transactions, "aiDecision");
@@ -17,21 +17,21 @@ export default function DashboardPage() {
 
   const data = {
     kpi: {
-      total: PORTFOLIO.totalTransactions,
-      approved: PORTFOLIO.totalTransactions - 23040 - 18600,
-      rejected: 23040,
-      rejectedBefore: PORTFOLIO.originalRejected,
-      review: 18600,
-      fpDetected: PORTFOLIO.estimatedFalsePositives,
-      fpRateAfter: PORTFOLIO.fpRateAfter,
-      fpRateBefore: PORTFOLIO.fpRateBefore,
-      fraudPrevented: PORTFOLIO.fraudPrevented,
-      revenueRecovered: PORTFOLIO.revenueRecovered,
-      costSaved: PORTFOLIO.investigationCostSaved,
-      frictionReduction: PORTFOLIO.customerFrictionReductionPct,
-      accuracy: PORTFOLIO.aiAgreementRate,
-      decisionTime: PORTFOLIO.avgDecisionTimeMs,
-      recovered: PORTFOLIO.recoveredTransactions,
+      total: k.totalTransactions,
+      approved: k.approved,
+      rejected: k.rejected,
+      rejectedBefore: original.REJECT,
+      review: k.underReview,
+      fpDetected: k.falsePositivesDetected,
+      fpRateAfter: k.fpRateAfter,
+      fpRateBefore: k.fpRateBefore,
+      fraudPrevented: k.fraudPrevented,
+      revenueRecovered: k.revenueRecovered,
+      costSaved: k.operationalCostSaved,
+      frictionReduction: k.frictionReductionPct,
+      accuracy: k.aiAgreementRate,
+      decisionTime: k.avgDecisionTimeMs,
+      recovered: k.recoveredTransactions,
     },
     fpTrend: metrics.map((m) => ({ label: m.label, before: m.fpRateBefore, after: m.fpRateAfter })),
     decisionCompare: (["APPROVE", "REVIEW", "REJECT", "MONITOR"] as const).map((d) => ({

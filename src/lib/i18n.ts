@@ -61,20 +61,51 @@ export const RULE_RECO_LABEL: Record<RuleRecommendationKey, { ar: string; en: st
 };
 
 export const CHANNEL_LABEL: Record<string, { ar: string; en: string }> = {
-  MOBILE: { ar: "الجوال", en: "Mobile" },
+  MOBILE_APP: { ar: "تطبيق الجوال", en: "Mobile App" },
   WEB: { ar: "الويب", en: "Web" },
   POS: { ar: "نقاط البيع", en: "POS" },
   ATM: { ar: "الصراف", en: "ATM" },
+  INTERNAL_TRANSFER: { ar: "تحويل داخلي", en: "Internal Transfer" },
+  VIBAN_CREDIT: { ar: "إيداع آيبان افتراضي", en: "vIBAN Credit" },
+  LOAN_REPAYMENT: { ar: "سداد قرض", en: "Loan Repayment" },
+  LOAN_DISBURSEMENT: { ar: "صرف قرض", en: "Loan Disbursement" },
+  WALLET_TRANSFER: { ar: "تحويل محفظة", en: "Wallet Transfer" },
+  // legacy fallbacks
+  MOBILE: { ar: "الجوال", en: "Mobile" },
   WALLET: { ar: "المحفظة", en: "Wallet" },
   BRANCH: { ar: "الفرع", en: "Branch" },
 };
 
 export const SEGMENT_LABEL: Record<string, { ar: string; en: string }> = {
   RETAIL: { ar: "أفراد", en: "Retail" },
+  SME: { ar: "منشآت صغيرة", en: "SME" },
+  PREMIUM: { ar: "بريميوم", en: "Premium" },
+  NEW_CUSTOMER: { ar: "عميل جديد", en: "New customer" },
+  LONG_TERM_CUSTOMER: { ar: "عميل قديم", en: "Long-term customer" },
+  HIGH_VALUE_CUSTOMER: { ar: "عميل مرتفع القيمة", en: "High-value customer" },
+  // legacy fallbacks
   PREMIER: { ar: "بريمير", en: "Premier" },
   PRIVATE: { ar: "خاص", en: "Private" },
-  SME: { ar: "منشآت صغيرة", en: "SME" },
   CORPORATE: { ar: "شركات", en: "Corporate" },
+};
+
+export const REGION_LABEL: Record<string, { ar: string; en: string }> = {
+  RIYADH: { ar: "الرياض", en: "Riyadh" },
+  MAKKAH: { ar: "مكة", en: "Makkah" },
+  EASTERN: { ar: "المنطقة الشرقية", en: "Eastern Province" },
+  MADINAH: { ar: "المدينة", en: "Madinah" },
+  QASSIM: { ar: "القصيم", en: "Qassim" },
+  ASIR: { ar: "عسير", en: "Asir" },
+};
+
+export const CATEGORY_LABEL: Record<string, { ar: string; en: string }> = {
+  TRANSFER: { ar: "تحويل", en: "Transfer" },
+  PAYMENT: { ar: "سداد", en: "Payment" },
+  SUPPLIER: { ar: "دفعة مورّد", en: "Supplier payment" },
+  SALARY: { ar: "راتب", en: "Salary" },
+  LOAN: { ar: "قرض", en: "Loan" },
+  PURCHASE: { ar: "شراء", en: "Purchase" },
+  WALLET: { ar: "محفظة", en: "Wallet" },
 };
 
 // ---- UI string dictionary ----------------------------------------------------
@@ -102,6 +133,8 @@ const ar: Dict = {
   "nav.settings": "الإعدادات والحوكمة",
   "nav.demo": "سيناريو العرض",
   "nav.why": "لماذا ZeRisk؟",
+  "nav.learning": "سجل التعلّم",
+  "nav.evidence": "أدلة النموذج الأولي",
   "nav.group.overview": "نظرة عامة",
   "nav.group.decisions": "القرارات",
   "nav.group.optimization": "التحسين",
@@ -184,6 +217,10 @@ const ar: Dict = {
   "page.demo.title": "سيناريو العرض",
   "page.demo.subtitle": "جولة موجهة من ٥ خطوات لعرض المنصة",
   "page.why.title": "لماذا ZeRisk؟",
+  "page.learning.title": "سجل التعلّم والمعايرة",
+  "page.learning.subtitle": "ماذا تعلّم النظام من التغذية الراجعة وكيف تغيّرت الإحصائيات",
+  "page.evidence.title": "أدلة النموذج الأولي",
+  "page.evidence.subtitle": "مقاييس محسوبة من مجموعة بيانات قابلة للتكرار",
 
   "demo.summary":
     "خلال آخر ٣٠ يومًا، ساعدت المنصة على استرداد ٨٬٤٦٠ عملية سليمة كان من المتوقع رفضها، بقيمة مالية تقديرية تتجاوز ١٫١٨ مليون ريال، مع الحفاظ على معدل اكتشاف الاحتيال ضمن الحدود المعتمدة.",
@@ -210,6 +247,8 @@ const en: Dict = {
   "nav.settings": "Settings & Governance",
   "nav.demo": "Demo Story",
   "nav.why": "Why ZeRisk?",
+  "nav.learning": "Learning History",
+  "nav.evidence": "MVP Evidence",
   "nav.group.overview": "Overview",
   "nav.group.decisions": "Decisions",
   "nav.group.optimization": "Optimization",
@@ -292,6 +331,10 @@ const en: Dict = {
   "page.demo.title": "Demo Story",
   "page.demo.subtitle": "A guided 5-step walkthrough to present the platform",
   "page.why.title": "Why ZeRisk?",
+  "page.learning.title": "Learning History & Calibration",
+  "page.learning.subtitle": "What the system learned from feedback and how statistics changed",
+  "page.evidence.title": "MVP Evidence",
+  "page.evidence.subtitle": "Metrics computed from a reproducible dataset",
 
   "demo.summary":
     "Over the last 30 days the platform helped recover 8,460 legitimate transactions that were set to be declined, worth an estimated SAR 1.18M, while keeping the fraud detection rate within approved limits.",

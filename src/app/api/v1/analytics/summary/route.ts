@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
-import { getDataset } from "@/lib/store";
+import { getDataset, getKpis, getCalibration } from "@/lib/store";
 import {
-  PORTFOLIO,
   countByDecision,
   riskLevelDistribution,
   confusionMetrics,
   sampleFalsePositives,
 } from "@/lib/analytics";
 
-// GET /api/v1/analytics/summary — portfolio + sample analytics snapshot.
+// GET /api/v1/analytics/summary — computed analytics snapshot (no hardcoded KPIs).
 export async function GET() {
   const ds = getDataset();
+  const kpis = getKpis();
   const conf = confusionMetrics(ds.transactions);
   return NextResponse.json({
-    portfolio: PORTFOLIO,
+    modelVersion: getCalibration().version,
+    kpis,
     sample: {
       transactions: ds.transactions.length,
       falsePositives: sampleFalsePositives(ds.transactions).length,
@@ -29,6 +30,6 @@ export async function GET() {
       },
     },
     disclaimer:
-      "Decision-support analytics. Final enforcement depends on approved governance policies.",
+      "Decision-support analytics computed from the reproducible MVP dataset. Final enforcement depends on approved governance policies.",
   });
 }

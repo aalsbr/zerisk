@@ -81,8 +81,8 @@ type SortKey =
 const PAGE_SIZE = 10;
 
 const DECISIONS: Decision[] = ["APPROVE", "REVIEW", "REJECT", "MONITOR"];
-const CHANNELS: Channel[] = ["MOBILE", "WEB", "POS", "ATM", "WALLET", "BRANCH"];
-const SEGMENTS: CustomerSegment[] = ["RETAIL", "PREMIER", "PRIVATE", "SME", "CORPORATE"];
+const CHANNELS: Channel[] = ["MOBILE_APP", "WEB", "POS", "ATM", "INTERNAL_TRANSFER", "VIBAN_CREDIT", "LOAN_REPAYMENT", "LOAN_DISBURSEMENT", "WALLET_TRANSFER"];
+const SEGMENTS: CustomerSegment[] = ["RETAIL", "SME", "PREMIUM", "NEW_CUSTOMER", "LONG_TERM_CUSTOMER", "HIGH_VALUE_CUSTOMER"];
 
 function riskLevel(score: number): "low" | "medium" | "high" | "critical" {
   if (score <= 34) return "low";

@@ -33,16 +33,24 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/providers";
 import { DECISION_LABEL, SEGMENT_LABEL, CHANNEL_LABEL, SEVERITY_LABEL } from "@/lib/i18n";
-import { PORTFOLIO } from "@/lib/analytics";
 import { fmtCurrency, fmtNumber, fmtPercent, compactCurrency } from "@/lib/format";
 
 // ---- Serializable props from the server (LIVE engine values) ----------------
+
+export interface DemoKpi {
+  manualReviewReductionPct: number;
+  fpRateBefore: number;
+  fpRateAfter: number;
+  revenueRecovered: number;
+  recoveredTransactions: number;
+}
 
 export interface DemoStoryData {
   id: string;
   amount: number;
   currency: string;
   channel: string;
+  kpi: DemoKpi;
   timestamp: string;
   originalDecision: "APPROVE" | "REVIEW" | "REJECT" | "MONITOR";
   originalRiskScore: number;
@@ -213,7 +221,7 @@ export function DemoView({ data }: { data: DemoStoryData }) {
                 processingTimeMs={data.ai.processingTimeMs}
               />
             )}
-            {step === 5 && <Step5 amount={data.amount} customerName={customerName} onRestart={restart} />}
+            {step === 5 && <Step5 amount={data.amount} customerName={customerName} kpi={data.kpi} onRestart={restart} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -701,10 +709,12 @@ function BigStat({
 function Step5({
   amount,
   customerName,
+  kpi,
   onRestart,
 }: {
   amount: number;
   customerName: string;
+  kpi: DemoKpi;
   onRestart: () => void;
 }) {
   const { lang, pick } = useI18n();
@@ -725,13 +735,13 @@ function Step5({
     {
       icon: Users,
       label: pick("خفض تكلفة المراجعة", "Review cost reduced"),
-      value: `-${PORTFOLIO.manualReviewReductionPct}%`,
+      value: `-${kpi.manualReviewReductionPct}%`,
       accent: "sky" as const,
     },
     {
       icon: TrendingUp,
       label: pick("تحسّن معدل الموافقة", "Approval rate improved"),
-      value: `+${(PORTFOLIO.fpRateBefore - PORTFOLIO.fpRateAfter).toFixed(2)}pt`,
+      value: `+${(kpi.fpRateBefore - kpi.fpRateAfter).toFixed(2)}pt`,
       accent: "violet" as const,
     },
   ];
@@ -862,9 +872,9 @@ function Step5({
                 {pick("الأثر الشهري التقديري على مستوى المحفظة", "Estimated monthly portfolio impact")}
               </p>
               <p className="mt-1 text-2xl font-extrabold text-emerald-700 tabular-nums">
-                {compactCurrency(PORTFOLIO.revenueRecovered, lang)}
+                {compactCurrency(kpi.revenueRecovered, lang)}
                 <span className="ms-2 text-sm font-medium text-muted">
-                  · {fmtNumber(PORTFOLIO.recoveredTransactions)} {pick("عملية", "txns")}
+                  · {fmtNumber(kpi.recoveredTransactions)} {pick("عملية", "txns")}
                 </span>
               </p>
             </div>

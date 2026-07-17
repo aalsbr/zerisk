@@ -5,6 +5,8 @@
 
 FROM node:22-bookworm-slim AS base
 ENV NEXT_TELEMETRY_DISABLED=1
+# Don't download Playwright browsers during `npm install` (e2e-only devDep).
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # Prisma schema references env("DATABASE_URL"); provide a harmless default so
 # `prisma generate` (run via postinstall/build) never fails during the build.
 ENV DATABASE_URL="file:./dev.db"

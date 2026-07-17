@@ -11,9 +11,11 @@
 // ============================================================================
 
 import "server-only";
+import { z } from "zod";
 import type { EnrichedTransaction, RuleStat } from "./types";
 import type { SimulationConfig, SimulationOutput } from "./simulation";
 import { sar } from "./format";
+import { getCalibration, getProfiles } from "./store";
 
 export const COPILOT_MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 
@@ -130,55 +132,115 @@ const ANALYST_SYSTEM =
   "You ONLY explain, summarize, and recommend. You never make the final approve/reject decision — " +
   "the bank's deterministic scoring engine is the source of truth. Always respond in valid JSON only.";
 
-// ---- 1. Transaction analysis -------------------------------------------------
+// ---- 1. Transaction analysis (Zod-validated, grounded on dynamic context) ----
 
-export interface TxnAnalysis {
+const EvidenceItem = z.object({
+  signal: z.string(),
+  value: z.string(),
+  source: z.string(),
+});
+const RuleAssessmentItem = z.object({
+  ruleId: z.string(),
+  falsePositiveRate: z.number(),
+  recommendation: z.string(),
+});
+// The LLM must return this exact shape; anything else → validation fails → local.
+const TxnAnalysisSchema = z.object({
+  summary: z.string().min(1),
+  customerImpact: z.string().min(1),
+  businessImpact: z.string().min(1),
+  supportingEvidence: z.array(EvidenceItem).default([]),
+  contradictingEvidence: z.array(EvidenceItem).default([]),
+  ruleAssessment: z.array(RuleAssessmentItem).default([]),
+});
+type TxnAnalysisPayload = z.infer<typeof TxnAnalysisSchema>;
+
+export interface TxnAnalysis extends TxnAnalysisPayload {
+  // decisions/scores ALWAYS from the local engine, never the LLM
   optimizedDecision: string;
   confidence: number;
   falsePositiveProbability: number;
-  reasoning: string[];
-  executiveSummary: string;
-  customerImpact: string;
-  businessImpact: string;
+  validationFailed: boolean;
   meta: CopilotMeta;
 }
 
-export async function analyzeTransaction(
-  t: EnrichedTransaction,
-): Promise<TxnAnalysis> {
-  const local = localTxnAnalysis(t);
-  const system = ANALYST_SYSTEM;
-  const user =
-    `Analyze this transaction. The scoring engine already produced the decision below — ` +
-    `explain it, do not change it. Return JSON with keys: optimizedDecision, confidence, ` +
-    `falsePositiveProbability, reasoning (array of 3-5 strings), executiveSummary, customerImpact, businessImpact.\n\n` +
-    JSON.stringify(txnContext(t), null, 2);
-  const out = parseJson<Partial<TxnAnalysis>>(await callResponses(system, user));
-  if (!out) return local;
+// Build the dynamic, authoritative context the LLM must reason over (it must not
+// invent numbers — every figure here is computed locally from profiles/labels).
+function buildTxnContext(t: EnrichedTransaction) {
+  const profiles = getProfiles();
+  const cal = getCalibration();
+  const dp = profiles.devices.get(t.deviceId);
+  const bp = profiles.beneficiaries.get(t.beneficiaryId);
+  const cp = profiles.customers.get(t.customerId);
+  const seg = profiles.segments.get(t.customer.segment);
+  const chan = profiles.channels.get(t.channel);
+  const rulePerf = t.triggeredRuleIds.map((id) => {
+    const r = profiles.rules.get(id);
+    return r ? { ruleId: id, precision: r.precision, falsePositiveRate: r.falsePositiveRate, confirmedFraud: r.confirmedFraudCount } : { ruleId: id };
+  });
   return {
-    ...local,
-    ...out,
-    // decisions/scores are ALWAYS from the local engine, never the LLM
+    modelVersion: cal.version,
+    governance: "Local scoring engine is the source of truth; you only explain.",
+    transaction: {
+      id: t.id, amount: t.amount, currency: t.currency, channel: t.channel, category: t.category,
+      originalDecision: t.originalDecision, originalRiskScore: t.originalRiskScore, triggeredRules: t.triggeredRuleIds,
+      hour: t.hour, mfaPassed: t.mfaPassed, failedLogins: t.failedLogins, velocity1h: t.velocity1h,
+    },
+    localEngineResult: {
+      recommendation: t.ai.recommendation, optimizedRiskScore: t.ai.optimizedRiskScore,
+      falsePositiveProbability: t.ai.falsePositiveProbability, confidence: t.ai.confidence,
+      riskBreakdown: t.ai.riskBreakdown,
+    },
+    customerProfile: cp && { segment: cp.segment, accountAgeMonths: t.customer.accountAgeMonths, confirmedFraud: cp.confirmedFraudCount, legitimate: cp.legitimateCount, historicalRiskRate: cp.historicalRiskRate, avgAmount: cp.averageAmount },
+    deviceProfile: dp && { trusted: dp.known, successfulTransactions: dp.successfulTransactionCount, fraud: dp.fraudCount, legit: dp.legitimateCount, customerCount: dp.customerCount, trustScore: dp.trustScore },
+    beneficiaryProfile: bp && { known: t.beneficiary.known, type: bp.type, successfulTransactions: bp.successfulTransactionCount, fraud: bp.fraudCount, legit: bp.legitimateCount, trustScore: bp.trustScore },
+    channelRisk: chan?.fraudRate, segmentRisk: seg?.fraudRate,
+    rulePerformance: rulePerf,
+    supportingSignals: t.ai.supporting.map((r) => r.en),
+    contradictingSignals: t.ai.increasing.map((r) => r.en),
+  };
+}
+
+export async function analyzeTransaction(t: EnrichedTransaction): Promise<TxnAnalysis> {
+  const local = localTxnAnalysis(t);
+  if (!isCopilotOnline()) return local;
+
+  const ctx = buildTxnContext(t);
+  const user =
+    "Analyze this transaction. The local engine already produced the decision — EXPLAIN it, do not change it. " +
+    "Use ONLY the numbers provided (never invent statistics). Every evidence item MUST include a `source` field " +
+    "(e.g. device_profile, beneficiary_profile, transaction, rule_performance). Return JSON with keys: " +
+    "summary, customerImpact, businessImpact, supportingEvidence (array of {signal,value,source}), " +
+    "contradictingEvidence (array of {signal,value,source}), ruleAssessment (array of {ruleId,falsePositiveRate,recommendation}).\n\n" +
+    JSON.stringify(ctx, null, 2);
+
+  const raw = parseJson<unknown>(await callResponses(ANALYST_SYSTEM, user));
+  const parsed = raw ? TxnAnalysisSchema.safeParse(raw) : null;
+  if (!parsed || !parsed.success) {
+    // Reject unsupported/invalid output → fall back to the local explanation engine.
+    console.warn("[copilot] OpenAI transaction analysis failed validation; using local fallback", parsed && !parsed.success ? parsed.error.issues.slice(0, 2) : "no-json");
+    return { ...local, validationFailed: true };
+  }
+  return {
+    ...parsed.data,
     optimizedDecision: t.ai.recommendation,
     confidence: t.ai.confidence,
     falsePositiveProbability: t.ai.falsePositiveProbability,
-    reasoning: out.reasoning?.length ? out.reasoning : local.reasoning,
+    validationFailed: false,
     meta: meta("openai"),
   };
 }
 
 function localTxnAnalysis(t: EnrichedTransaction): TxnAnalysis {
-  const reasoning = [
-    ...t.ai.supporting.slice(0, 3).map((r) => r.en),
-    ...t.ai.increasing.slice(0, 2).map((r) => `Risk factor: ${r.en}`),
-  ];
+  const dp = getProfiles().devices.get(t.deviceId);
+  const bp = getProfiles().beneficiaries.get(t.beneficiaryId);
   const recovered = t.isFalsePositive;
+  const supportingEvidence = t.ai.supporting.slice(0, 4).map((r) => ({
+    signal: r.code, value: r.en, source: r.code.includes("DEVICE") ? "device_profile" : r.code.includes("BENEFICIARY") ? "beneficiary_profile" : "transaction",
+  }));
+  const contradictingEvidence = t.ai.increasing.slice(0, 4).map((r) => ({ signal: r.code, value: r.en, source: "transaction" }));
   return {
-    optimizedDecision: t.ai.recommendation,
-    confidence: t.ai.confidence,
-    falsePositiveProbability: t.ai.falsePositiveProbability,
-    reasoning: reasoning.length ? reasoning : ["Balanced risk profile across all signals."],
-    executiveSummary: recovered
+    summary: recovered
       ? `The legacy engine ${t.originalDecision.toLowerCase()}ed a ${sar(t.amount)} transaction that ZeRisk assesses as legitimate (optimized risk ${t.ai.optimizedRiskScore}/100, ${t.ai.falsePositiveProbability}% false-positive probability). Recommendation: ${t.ai.recommendation}.`
       : `ZeRisk confirms an optimized risk score of ${t.ai.optimizedRiskScore}/100 with recommendation ${t.ai.recommendation} at ${t.ai.confidence}% confidence.`,
     customerImpact: recovered
@@ -187,32 +249,17 @@ function localTxnAnalysis(t: EnrichedTransaction): TxnAnalysis {
     businessImpact: recovered
       ? `Recovering this transaction protects ~${sar(t.amount)} in transaction value and avoids manual review and support cost.`
       : "Decision maintains fraud protection within governance limits.",
-    meta: meta("local"),
-  };
-}
-
-function txnContext(t: EnrichedTransaction) {
-  return {
-    transactionId: t.id,
-    amount: t.amount,
-    currency: t.currency,
-    channel: t.channel,
-    originalDecision: t.originalDecision,
-    originalRiskScore: t.originalRiskScore,
-    triggeredRules: t.triggeredRuleIds,
-    optimizedRiskScore: t.ai.optimizedRiskScore,
-    recommendation: t.ai.recommendation,
-    falsePositiveProbability: t.ai.falsePositiveProbability,
+    supportingEvidence: supportingEvidence.length ? supportingEvidence : [{ signal: "BALANCED", value: `${dp?.legitimateCount ?? 0} legit device outcomes, ${bp?.legitimateCount ?? 0} legit beneficiary outcomes`, source: "profiles" }],
+    contradictingEvidence,
+    ruleAssessment: t.triggeredRuleIds.map((id) => {
+      const r = getProfiles().rules.get(id);
+      return { ruleId: id, falsePositiveRate: r?.falsePositiveRate ?? 0, recommendation: (r?.falsePositiveRate ?? 0) >= 40 ? "Reduce rule weight for trusted patterns" : "Keep" };
+    }),
+    optimizedDecision: t.ai.recommendation,
     confidence: t.ai.confidence,
-    customer: {
-      segment: t.customer.segment,
-      accountAgeMonths: t.customer.accountAgeMonths,
-      avgTxnAmount: t.customer.avgTxnAmount,
-    },
-    deviceTrust: t.device.known ? "trusted" : "new",
-    beneficiaryTrust: t.beneficiary.known ? "known" : "new",
-    mfaPassed: t.mfaPassed,
-    riskBreakdown: t.ai.riskBreakdown,
+    falsePositiveProbability: t.ai.falsePositiveProbability,
+    validationFailed: false,
+    meta: meta("local"),
   };
 }
 
@@ -356,7 +403,7 @@ export async function generateInvestigatorRecommendation(
   };
   const user =
     "Give an investigator a recommendation and rationale (JSON: {\"recommendation\": \"...\", \"rationale\": [\"...\"]}):\n" +
-    JSON.stringify(txnContext(t), null, 2);
+    JSON.stringify(buildTxnContext(t), null, 2);
   const out = parseJson<{ recommendation: string; rationale: string[] }>(
     await callResponses(ANALYST_SYSTEM, user),
   );

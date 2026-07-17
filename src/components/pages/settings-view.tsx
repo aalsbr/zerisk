@@ -60,7 +60,7 @@ const ROLE_META: Record<Role, { icon: typeof Crown; ar: string; en: string }> = 
   ADMINISTRATOR: { icon: Settings2, ar: "ضبط العتبات والحوكمة وصلاحيات النظام.", en: "Configures thresholds, governance and system access." },
 };
 
-const SEGMENTS: CustomerSegment[] = ["RETAIL", "PREMIER", "PRIVATE", "SME", "CORPORATE"];
+const SEGMENTS: CustomerSegment[] = ["RETAIL", "SME", "PREMIUM", "NEW_CUSTOMER", "LONG_TERM_CUSTOMER", "HIGH_VALUE_CUSTOMER"];
 
 export function SettingsView({ governance, audit }: { governance: Governance; audit: AuditRow[] }) {
   const { t, lang, pick, tr } = useI18n();
@@ -75,8 +75,8 @@ export function SettingsView({ governance, audit }: { governance: Governance; au
 
   // Governance tab local state
   const [protectedSegments, setProtectedSegments] = React.useState<CustomerSegment[]>([
-    "PRIVATE",
-    "CORPORATE",
+    "HIGH_VALUE_CUSTOMER",
+    "LONG_TERM_CUSTOMER",
   ]);
   const [highRiskCountries] = React.useState<string[]>(
     lang === "ar"

@@ -12,6 +12,8 @@ import {
   Settings,
   Presentation,
   Sparkles,
+  Brain,
+  BadgeCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,6 +47,7 @@ export const NAV: NavGroup[] = [
       { href: "/rules", key: "nav.rules", Icon: SlidersHorizontal },
       { href: "/simulation", key: "nav.simulation", Icon: FlaskConical },
       { href: "/monitoring", key: "nav.monitoring", Icon: Activity },
+      { href: "/learning", key: "nav.learning", Icon: Brain },
     ],
   },
   {
@@ -53,6 +56,7 @@ export const NAV: NavGroup[] = [
       { href: "/insights", key: "nav.insights", Icon: Lightbulb },
       { href: "/copilot", key: "nav.copilot", Icon: Bot },
       { href: "/financial", key: "nav.financial", Icon: Wallet },
+      { href: "/evidence", key: "nav.evidence", Icon: BadgeCheck },
     ],
   },
   {

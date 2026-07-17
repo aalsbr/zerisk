@@ -1,34 +1,32 @@
-import { getDataset } from "@/lib/store";
+import { getDataset, getKpis } from "@/lib/store";
 import {
-  PORTFOLIO,
-  PORTFOLIO_SCALE,
   sampleFalsePositives,
   fpBreakdowns,
   computeRuleStats,
+  countByDecision,
 } from "@/lib/analytics";
 import { FalsePositivesView } from "@/components/pages/false-positives-view";
 
 export default function FalsePositivesPage() {
   const { transactions, rules } = getDataset();
+  const k = getKpis();
 
   const fpSample = sampleFalsePositives(transactions);
   const breakdowns = fpBreakdowns(transactions);
   const ruleStats = computeRuleStats(transactions, rules);
+  const original = countByDecision(transactions, "originalDecision");
 
-  // Financial value of the false declines (sample amounts projected to portfolio scale).
-  const fpAmountValue = Math.round(
-    fpSample.reduce((sum, t) => sum + t.amount, 0) * PORTFOLIO_SCALE,
-  );
+  const fpAmountValue = Math.round(fpSample.reduce((sum, t) => sum + t.amount, 0));
 
   const data = {
     kpi: {
-      fpRateAfter: PORTFOLIO.fpRateAfter,
-      fpRateBefore: PORTFOLIO.fpRateBefore,
-      estimatedFalsePositives: PORTFOLIO.estimatedFalsePositives,
+      fpRateAfter: k.fpRateAfter,
+      fpRateBefore: k.fpRateBefore,
+      estimatedFalsePositives: k.falsePositivesDetected,
       fpAmountValue,
-      revenueRecovered: PORTFOLIO.revenueRecovered,
-      recoveredTransactions: PORTFOLIO.recoveredTransactions,
-      originalRejected: PORTFOLIO.originalRejected,
+      revenueRecovered: k.revenueRecovered,
+      recoveredTransactions: k.recoveredTransactions,
+      originalRejected: original.REJECT,
     },
     breakdowns,
     // Serializable rule rows sorted by falsePositives desc (already sorted by computeRuleStats).

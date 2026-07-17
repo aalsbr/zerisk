@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateDataset } from "./demo-data";
+import { generateDataset } from "./dataset";
 import { defaultConfig, runSimulation } from "./simulation";
 
 const ds = generateDataset();

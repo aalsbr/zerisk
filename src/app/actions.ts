@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   getTransaction,
+  recalibrate,
   resetDemo,
   saveSimulation,
   setAppliedDecision,
@@ -137,4 +138,10 @@ export async function resetDemoDataAction() {
   resetDemo();
   refresh();
   return { ok: true };
+}
+
+export async function recalibrateModelAction() {
+  const summary = recalibrate();
+  refresh();
+  return { ok: true, summary };
 }

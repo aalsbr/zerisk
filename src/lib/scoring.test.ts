@@ -106,4 +106,45 @@ describe("scoring engine", () => {
     const unknown = computeRiskBreakdown({ ...base, deviceKnown: false, deviceAgeDays: 0, deviceTxnCount: 0 });
     expect(unknown.device).toBeGreaterThan(known.device);
   });
+
+  it("a new device alone does NOT force rejection when other signals are clean", () => {
+    const r = scoreTransaction({ ...base, deviceKnown: false, deviceAgeDays: 1, deviceTxnCount: 0, originalRiskScore: 55 });
+    expect(r.recommendation).not.toBe("REJECT");
+  });
+
+  it("a high amount alone does NOT force rejection for a trusted profile", () => {
+    const r = scoreTransaction({ ...base, amount: 40000, customerAvgAmount: 8000, originalRiskScore: 70, triggeredRuleSeverities: ["HIGH"] });
+    expect(r.recommendation).not.toBe("REJECT");
+  });
+
+  it("strong fraud indicators are NOT overridden by a high false-positive probability", () => {
+    const fraud = scoreTransaction({
+      ...base, originalRiskScore: 80, deviceKnown: false, deviceAgeDays: 0, deviceTxnCount: 0,
+      beneficiaryKnown: false, mfaPassed: false, failedLogins: 4, velocity1h: 8,
+      historicalFraudCount: 3, similarFraudOutcomes: 3, similarLegitOutcomes: 0,
+      triggeredRuleSeverities: ["HIGH", "HIGH"],
+    });
+    expect(["REJECT", "REVIEW"]).toContain(fraud.recommendation);
+  });
+
+  it("governance prevents unsafe auto-approval above the override limit", () => {
+    const gov = { ...DEFAULT_GOVERNANCE, maxOverrideAmount: 10000 };
+    const r = scoreTransaction({ ...base, amount: 25000, originalRiskScore: 84, similarLegitOutcomes: 6 }, gov);
+    expect(r.recommendation).not.toBe("APPROVE");
+  });
+
+  it("handles missing/undefined learned profile fields safely", () => {
+    const minimal = { ...base };
+    delete (minimal as Record<string, unknown>).deviceLegitCount;
+    delete (minimal as Record<string, unknown>).segmentFraudRate;
+    const r = scoreTransaction(minimal);
+    expect(r.optimizedRiskScore).toBeGreaterThanOrEqual(0);
+    expect(r.recommendation).toBeTruthy();
+  });
+
+  it("confidence decreases when adverse context is present", () => {
+    const clean = scoreTransaction(base).confidence;
+    const noisy = scoreTransaction({ ...base, failedLogins: 3 }).confidence;
+    expect(noisy).toBeLessThanOrEqual(clean);
+  });
 });

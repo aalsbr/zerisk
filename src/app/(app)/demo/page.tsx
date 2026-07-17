@@ -1,10 +1,11 @@
-import { getTransaction } from "@/lib/store";
+import { getTransaction, getKpis } from "@/lib/store";
 import { HERO_IDS } from "@/lib/demo-data";
 import { DemoView, type DemoStoryData } from "@/components/pages/demo-view";
 
 export default function DemoPage() {
   const t = getTransaction(HERO_IDS.falsePositive);
   if (!t) throw new Error("Hero transaction not found");
+  const k = getKpis();
 
   // Pass the FULL enriched (serializable) transaction so the story renders LIVE engine values.
   const data: DemoStoryData = {
@@ -56,6 +57,13 @@ export default function DemoPage() {
         weight: s.weight,
       })),
       processingTimeMs: t.ai.processingTimeMs,
+    },
+    kpi: {
+      manualReviewReductionPct: k.manualReviewReductionPct,
+      fpRateBefore: k.fpRateBefore,
+      fpRateAfter: k.fpRateAfter,
+      revenueRecovered: k.revenueRecovered,
+      recoveredTransactions: k.recoveredTransactions,
     },
   };
 
