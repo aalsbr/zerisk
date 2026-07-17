@@ -180,19 +180,20 @@ export function RulesView({ data }: { data: RulesData }) {
     const enabled = st !== "DISABLED";
     const isBusy = busyId === r.id && pending;
 
-    // Concrete AI recommendation sentence (FR-017 style), computed where possible.
-    const reductionPct = lang === "ar" ? "٣١٪" : "31%";
-    const exposurePct = lang === "ar" ? "٠٫٤٪" : "0.4%";
+    // Concrete AI recommendation sentence — estimates computed PER RULE from its
+    // own false-positive rate / precision (not a shared constant).
+    const reductionPct = Math.round(r.falsePositiveRate * 0.32);
+    const exposurePct = +(Math.max(0.1, (100 - r.falsePositiveRate) * 0.02)).toFixed(1);
     const sentence =
       lang === "ar"
         ? `القاعدة ${r.id} تسببت في ${fmtNumber(r.falsePositives)} رفضًا خاطئًا واكتشفت ${fmtNumber(
             r.confirmedFraud,
-          )} حالة احتيال مؤكدة فقط. ${tr(RULE_RECO_LABEL[r.recommendationKey])} يُقدّر أن يخفض الرفض الخاطئ بنسبة ${reductionPct} مقابل زيادة تعرض الاحتيال بنسبة ${exposurePct} فقط.`
+          )} حالة احتيال مؤكدة فقط. ${tr(RULE_RECO_LABEL[r.recommendationKey])} يُقدّر أن يخفض الرفض الخاطئ بنسبة ${reductionPct}٪ مقابل زيادة تعرض الاحتيال بنسبة ${exposurePct}٪ فقط.`
         : `${r.id} caused ${fmtNumber(r.falsePositives)} false declines and caught only ${fmtNumber(
             r.confirmedFraud,
           )} confirmed fraud cases. ${tr(
             RULE_RECO_LABEL[r.recommendationKey],
-          )} is estimated to reduce false declines by ${reductionPct} for only a ${exposurePct} increase in fraud exposure.`;
+          )} is estimated to reduce false declines by ${reductionPct}% for only a ${exposurePct}% increase in fraud exposure.`;
 
     return (
       <motion.div
