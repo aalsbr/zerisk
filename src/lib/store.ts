@@ -18,9 +18,9 @@ import { computeKpis, confusionForDecision, generateInsights } from "./analytics
 import { DEFAULT_ASSUMPTIONS } from "./financial";
 import { DEFAULT_GOVERNANCE, type Governance } from "./scoring";
 import type {
-  Calibration, EnrichedTransaction, FinancialAssumptions, Insight, InsightStatus,
+  Calibration, EnrichedTransaction, FinancialAssumptions, IngestInput, Insight, InsightStatus,
   InvestigationOutcome, InvestigatorFeedback, KpiSnapshot, LearningChange, LearningEvent,
-  ModelVersion, MvpEvidence, RuleStatus,
+  ModelVersion, MvpEvidence, RuleStatus, Transaction,
 } from "./types";
 
 const NOW = () => new Date(Date.UTC(2026, 6, 17, 12, 0)).toISOString();
@@ -37,6 +37,8 @@ interface Cache {
 
 interface Store {
   base: BaseDataset;
+  ingested: Transaction[]; // live transactions pushed in (e.g. by IBM Safer Payments)
+  ingestSeq: number;
   labelOverlay: Map<string, InvestigationOutcome>;
   feedbackMap: Map<string, InvestigatorFeedback>;
   calibration: Calibration;
@@ -74,7 +76,7 @@ function init(): Store {
 
   const mv0 = buildModelVersion(baselineCalibration().version, new Date(Date.UTC(2025, 7, 1)).toISOString(), 0, "System", "الإصدار الأساسي غير المعاير", { falsePositiveRate: 0, recall: 0, precision: 0, accuracy: 0 });
   const store: Store = {
-    base, labelOverlay, feedbackMap: new Map(), calibration,
+    base, ingested: [], ingestSeq: 1, labelOverlay, feedbackMap: new Map(), calibration,
     lastCalibratedLabeledCount: profiles0.labeledCount,
     modelVersions: [mv0], learningEvents: [],
     insightStatus: new Map(), ruleStatus: new Map(),
@@ -105,7 +107,11 @@ function invalidate() { store().rev++; }
 function enriched(): Cache {
   const s = store();
   if (s.cache && s.cache.rev === s.rev) return s.cache;
-  const { transactions, profiles } = buildEnriched(s.base, s.calibration, s.governance, s.labelOverlay, s.feedbackMap);
+  // Live-ingested transactions flow through the same pipeline as seeded ones.
+  const base = s.ingested.length
+    ? { ...s.base, rawTransactions: [...s.ingested, ...s.base.rawTransactions] }
+    : s.base;
+  const { transactions, profiles } = buildEnriched(base, s.calibration, s.governance, s.labelOverlay, s.feedbackMap);
   const kpis = computeKpis(transactions, s.assumptions);
   const insights = generateInsights(profiles, kpis, NOW());
   s.cache = { rev: s.rev, transactions, profiles, kpis, insights };
@@ -283,4 +289,61 @@ export function saveSimulation(ruleId: string, netBenefit: number, verdict: stri
   s.simulations.unshift({ id: `SIM-${1000 + s.simulations.length}`, at: NOW(), ruleId, netBenefit, verdict });
   audit(actor, "SIMULATION", `حفظ محاكاة للقاعدة ${ruleId}`);
 }
+// Ingest a live transaction (e.g. pushed by IBM Safer Payments) — it flows
+// through the scoring engine + profiles + calibration exactly like seeded data
+// and immediately appears across Live Transactions, dashboards and analytics.
+export function ingestTransaction(input: IngestInput): EnrichedTransaction {
+  const s = store();
+  const customer = (input.customerId && s.base.customers.find((c) => c.id === input.customerId)) || s.base.customers[0];
+  const device = input.deviceKnown
+    ? s.base.devices.find((d) => d.known && d.txnCount > 50) ?? s.base.devices[0]
+    : s.base.devices.find((d) => !d.known) ?? s.base.devices[0];
+  const beneficiary = input.beneficiaryKnown
+    ? s.base.beneficiaries.find((b) => b.known && b.txnCount > 10) ?? s.base.beneficiaries[0]
+    : s.base.beneficiaries.find((b) => !b.known) ?? s.base.beneficiaries[0];
+  const triggered = (input.triggeredRuleIds ?? []).filter((id) => s.base.rules.some((r) => r.id === id));
+  const id = input.transactionId?.trim() || `TX-LIVE-${String(s.ingestSeq).padStart(4, "0")}`;
+  s.ingestSeq++;
+
+  const txn: Transaction = {
+    id,
+    customerId: customer.id,
+    amount: Math.max(1, Math.round(input.amount)),
+    currency: input.currency ?? "SAR",
+    channel: input.channel,
+    category: input.category ?? "TRANSFER",
+    deviceId: device.id,
+    beneficiaryId: beneficiary.id,
+    region: input.region ?? customer.region,
+    timestamp: NOW(),
+    hour: input.hour ?? 14,
+    originalDecision: input.originalDecision,
+    originalRiskScore: Math.max(0, Math.min(100, Math.round(input.originalRiskScore))),
+    triggeredRuleIds: triggered,
+    mfaPassed: input.mfaPassed,
+    failedLogins: Math.max(0, input.failedLogins ?? 0),
+    velocity1h: Math.max(1, input.velocity1h ?? 1),
+    passwordResetRecently: input.passwordResetRecently ?? false,
+    locationFamiliar: input.locationFamiliar ?? true,
+    timeFamiliar: input.timeFamiliar ?? true,
+    isActuallyFraud: false,
+    outcome: undefined,
+    scenario: "NORMAL",
+    processingTimeMs: 0,
+    source: input.source ?? "Manual ingest",
+  };
+
+  s.ingested = s.ingested.filter((t) => t.id !== id); // replace if same id re-sent
+  s.ingested.unshift(txn);
+  if (s.ingested.length > 200) s.ingested = s.ingested.slice(0, 200);
+  audit(input.source ?? "Ingest API", "INGEST", `عملية حية جديدة ${id}`);
+  invalidate();
+  return getTransaction(id)!;
+}
+
+export function getIngested(): EnrichedTransaction[] {
+  const ids = new Set(store().ingested.map((t) => t.id));
+  return enriched().transactions.filter((t) => ids.has(t.id));
+}
+
 export function resetDemo() { g.__zrStore = init(); }

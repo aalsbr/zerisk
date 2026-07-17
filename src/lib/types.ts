@@ -245,6 +245,33 @@ export interface Transaction {
   outcome?: InvestigationOutcome;
   scenario: ScenarioType;
   processingTimeMs: number;
+  // for live-ingested transactions (e.g. pushed by an external fraud engine)
+  source?: string;
+}
+
+// Payload a fraud engine (e.g. IBM Safer Payments) pushes into ZeRisk for
+// real-time optimization. The engine scores + persists it as a live transaction.
+export interface IngestInput {
+  transactionId?: string;
+  customerId?: string;
+  amount: number;
+  currency?: string;
+  channel: Channel;
+  category?: TxnCategory;
+  region?: Region;
+  deviceKnown: boolean;
+  beneficiaryKnown: boolean;
+  mfaPassed: boolean;
+  failedLogins?: number;
+  velocity1h?: number;
+  passwordResetRecently?: boolean;
+  locationFamiliar?: boolean;
+  timeFamiliar?: boolean;
+  hour?: number;
+  originalDecision: Decision;
+  originalRiskScore: number;
+  triggeredRuleIds?: string[];
+  source?: string;
 }
 
 export interface InvestigatorFeedback {

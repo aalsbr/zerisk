@@ -221,6 +221,8 @@ const ar: Dict = {
   "page.learning.subtitle": "ماذا تعلّم النظام من التغذية الراجعة وكيف تغيّرت الإحصائيات",
   "page.evidence.title": "أدلة النموذج الأولي",
   "page.evidence.subtitle": "مقاييس محسوبة من مجموعة بيانات قابلة للتكرار",
+  "page.ingest.title": "إدخال عملية حية",
+  "page.ingest.subtitle": "محاكاة إرسال محرك الاحتيال (IBM Safer Payments) عملية إلى ZeRisk",
 
   "demo.summary":
     "خلال آخر ٣٠ يومًا، ساعدت المنصة على استرداد ٨٬٤٦٠ عملية سليمة كان من المتوقع رفضها، بقيمة مالية تقديرية تتجاوز ١٫١٨ مليون ريال، مع الحفاظ على معدل اكتشاف الاحتيال ضمن الحدود المعتمدة.",
@@ -335,6 +337,8 @@ const en: Dict = {
   "page.learning.subtitle": "What the system learned from feedback and how statistics changed",
   "page.evidence.title": "MVP Evidence",
   "page.evidence.subtitle": "Metrics computed from a reproducible dataset",
+  "page.ingest.title": "Ingest Live Transaction",
+  "page.ingest.subtitle": "Simulate a fraud engine (IBM Safer Payments) pushing a transaction to ZeRisk",
 
   "demo.summary":
     "Over the last 30 days the platform helped recover 8,460 legitimate transactions that were set to be declined, worth an estimated SAR 1.18M, while keeping the fraud detection rate within approved limits.",

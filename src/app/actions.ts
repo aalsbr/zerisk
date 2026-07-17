@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   getTransaction,
+  ingestTransaction,
   recalibrate,
   resetDemo,
   saveSimulation,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/store";
 import type {
   FinancialAssumptions,
+  IngestInput,
   InsightStatus,
   InvestigationOutcome,
   RuleStatus,
@@ -144,4 +146,29 @@ export async function recalibrateModelAction() {
   const summary = recalibrate();
   refresh();
   return { ok: true, summary };
+}
+
+export async function ingestTransactionAction(input: IngestInput) {
+  const t = ingestTransaction(input);
+  refresh();
+  return {
+    ok: true,
+    id: t.id,
+    source: t.source,
+    original: { decision: t.originalDecision, riskScore: t.originalRiskScore },
+    ai: {
+      recommendation: t.ai.recommendation,
+      optimizedRiskScore: t.ai.optimizedRiskScore,
+      falsePositiveProbability: t.ai.falsePositiveProbability,
+      confidence: t.ai.confidence,
+      processingTimeMs: t.ai.processingTimeMs,
+      supporting: t.ai.supporting.map((r) => ({ ar: r.ar, en: r.en })),
+      increasing: t.ai.increasing.map((r) => ({ ar: r.ar, en: r.en })),
+      riskBreakdown: t.ai.riskBreakdown,
+    },
+    isFalsePositive: t.isFalsePositive,
+    customer: { name: t.customer.name, nameEn: t.customer.nameEn, segment: t.customer.segment },
+    amount: t.amount,
+    currency: t.currency,
+  };
 }
