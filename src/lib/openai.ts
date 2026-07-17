@@ -39,6 +39,7 @@ async function callResponses(
   system: string,
   user: string,
   json = true,
+  reasoningEffort?: "minimal" | "low" | "medium" | "high",
 ): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -59,6 +60,8 @@ async function callResponses(
           { role: "system", content: system },
           { role: "user", content: user },
         ],
+        max_output_tokens: 900,
+        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         ...(json ? { text: { format: { type: "json_object" } } } : {}),
       }),
     });
@@ -108,13 +111,18 @@ function parseJson<T>(text: string | null): T | null {
 // ---- Copilot chat refinement (grounded on local facts) ----------------------
 
 const COPILOT_SYSTEM =
-  "You are the Fraud AI Copilot for a bank. You ONLY explain, summarize and recommend — " +
-  "you never make the final approve/reject decision (the local scoring engine is the source " +
-  "of truth). You are given GROUNDED FACTS computed locally; base your answer strictly on them, " +
-  "never invent numbers or decisions. Answer in the user's language, concise and professional. " +
-  "Return plain text (short paragraphs / dash bullets), not JSON.";
+  "You are the ZeRisk Fraud AI Copilot for a bank — a helpful, conversational analyst. " +
+  "Answer the user's question directly and naturally (any question about the platform's fraud " +
+  "data, rules, transactions, KPIs, model, or recommendations). You ONLY explain, summarize and " +
+  "recommend — you never make the final approve/reject decision (the local scoring engine is the " +
+  "source of truth). You are given GROUNDED FACTS computed locally from the live dataset: use them " +
+  "for any figures and NEVER invent numbers, rules, or transaction IDs. If a specific number isn't " +
+  "in the facts, say what you can from what's given rather than guessing. Answer in the user's " +
+  "language (Arabic or English), concise and professional, using short paragraphs or dash bullets. " +
+  "Plain text only, not JSON.";
 
-// Returns a refined answer string, or null to signal the caller to use the local answer.
+// Answers the question grounded on live facts. Returns the answer, or null to
+// signal the caller to use the local engine (offline / API error).
 export async function copilotRefine(
   question: string,
   groundedFacts: string,
@@ -122,9 +130,10 @@ export async function copilotRefine(
 ): Promise<string | null> {
   if (!isCopilotOnline()) return null;
   const user =
-    `User question (${lang}): ${question}\n\nGROUNDED FACTS (authoritative — do not contradict):\n${groundedFacts}\n\n` +
-    `Write a helpful ${lang === "ar" ? "Arabic" : "English"} answer using only these facts.`;
-  return callResponses(COPILOT_SYSTEM, user, false);
+    `User question (answer in ${lang === "ar" ? "Arabic" : "English"}): ${question}\n\n` +
+    `GROUNDED FACTS from the live ZeRisk dataset (authoritative — use these for all figures):\n${groundedFacts}\n\n` +
+    `Answer the question helpfully using these facts.`;
+  return callResponses(COPILOT_SYSTEM, user, false, "low");
 }
 
 const ANALYST_SYSTEM =

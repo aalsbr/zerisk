@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { answerQuestion } from "@/lib/copilot";
-import { copilotRefine, isCopilotOnline } from "@/lib/openai";
-import { COPILOT_MODEL } from "@/lib/openai";
+import { answerQuestion, buildCopilotContext } from "@/lib/copilot";
+import { copilotRefine, isCopilotOnline, COPILOT_MODEL } from "@/lib/openai";
 
 export async function POST(req: Request) {
   let body: { question?: string; lang?: "ar" | "en" };
@@ -17,14 +16,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "question is required" }, { status: 400 });
   }
 
-  // Local, deterministic answer is always the ground truth.
+  // Local, deterministic answer: offline fallback + extracts the most relevant
+  // computed facts (specific transaction / rule) for the question.
   const local = answerQuestion(question, lang);
 
-  // Optionally refine wording via OpenAI (grounded strictly on the local facts).
   let answer = local.answer;
   let source: "openai" | "local" = "local";
+
+  // When online, let the AI actually answer ANY question, grounded on live facts
+  // (rich dataset context + the specific facts the local engine surfaced).
   if (isCopilotOnline()) {
-    const refined = await copilotRefine(question, local.answer, lang);
+    const facts =
+      buildCopilotContext(lang) +
+      `\n\nMOST RELEVANT COMPUTED FACTS FOR THIS QUESTION:\n${local.answer}` +
+      (local.sources.length ? `\nSources: ${local.sources.join(", ")}` : "");
+    const refined = await copilotRefine(question, facts, lang);
     if (refined && refined.trim().length > 0) {
       answer = refined.trim();
       source = "openai";

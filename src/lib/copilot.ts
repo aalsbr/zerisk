@@ -8,11 +8,41 @@
 // ============================================================================
 
 import "server-only";
-import { getDataset, getKpis } from "./store";
+import { getDataset, getKpis, getCalibration } from "./store";
 import { computeRuleStats, sampleFalsePositives } from "./analytics";
 import { DECISION_LABEL, RULE_RECO_LABEL } from "./i18n";
 import { fmtCurrency, fmtNumber, fmtPercent } from "./format";
 import type { Lang } from "./format";
+import { DEMO_IDS } from "./demo-data";
+
+// Rich, live grounded-facts context so the LLM can answer ANY question about the
+// platform accurately (never invents figures — every number here is computed).
+export function buildCopilotContext(lang: Lang): string {
+  const ds = getDataset();
+  const k = getKpis();
+  const cal = getCalibration();
+  const stats = computeRuleStats(ds.transactions, ds.rules);
+  const cur = (n: number) => fmtCurrency(n, "en");
+
+  const topRules = stats.slice(0, 6).map((s) =>
+    `${s.rule.id} (${s.rule.nameEn}): triggers ${s.triggerCount}, confirmedFraud ${s.confirmedFraud}, falsePositives ${s.falsePositives}, precision ${s.precision}%, fpRate ${s.falsePositiveRate}%, recommendation "${RULE_RECO_LABEL[s.recommendationKey].en}"`,
+  ).join("\n  ");
+
+  const demo = Object.entries(DEMO_IDS).map(([label, id]) => {
+    const t = ds.transactions.find((x) => x.id === id);
+    return t ? `${id} [${label}]: ${cur(t.amount)}, legacy ${t.originalDecision}(${t.originalRiskScore}) -> ZeRisk ${t.ai.recommendation}(opt ${t.ai.optimizedRiskScore}), FPprob ${t.ai.falsePositiveProbability}%, isFalsePositive=${t.isFalsePositive}` : "";
+  }).filter(Boolean).join("\n  ");
+
+  return `PLATFORM: ZeRisk — an AI fraud decision-optimization layer above the legacy fraud engine (IBM Safer Payments). It re-scores decisions to cut false positives while preserving fraud detection. The local deterministic scoring engine is the source of truth; you only explain.
+MODEL: version ${cal.version}, labeled outcomes ${fmtNumber(cal.labeledCount)}; calibration factors: deviceTrustBoost ${cal.deviceTrustBoost}, beneficiaryHistoryBoost ${cal.beneficiaryHistoryBoost}, fpCalibration ${cal.fpCalibration}, confidenceBias ${cal.confidenceBias}.
+DATASET: ${fmtNumber(ds.transactions.length)} transactions, ${ds.customers.length} customers, ${ds.devices.length} devices, ${ds.beneficiaries.length} beneficiaries, ${ds.rules.length} fraud rules, ${sampleFalsePositives(ds.transactions).length} false positives detected.
+KPIs: approved ${fmtNumber(k.approved)}, rejected ${fmtNumber(k.rejected)}, under review ${fmtNumber(k.underReview)}, monitored ${fmtNumber(k.monitored)}; false-positive rate before ${fmtPercent(k.fpRateBefore, 2)} -> after ${fmtPercent(k.fpRateAfter, 2)}; recovered ${fmtNumber(k.recoveredTransactions)} legitimate transactions; revenue recovered ${cur(k.revenueRecovered)}; fraud prevented ${cur(k.fraudPrevented)}; operational cost saved ${cur(k.operationalCostSaved)}; recall before ${fmtPercent(k.originalRecall)} -> after ${fmtPercent(k.optimizedRecall)}; false negatives caught (missed by legacy) ${k.falseNegativesCaught}; average confidence ${fmtPercent(k.avgConfidence)}; average decision time ${k.avgDecisionTimeMs}ms; accuracy ${fmtPercent(k.aiAgreementRate)}.
+TOP RULES BY FALSE POSITIVES:
+  ${topRules}
+NOTABLE (searchable) TRANSACTIONS:
+  ${demo}
+Answer in ${lang === "ar" ? "Arabic" : "English"}.`;
+}
 
 export interface CopilotAnswer {
   answer: string;
