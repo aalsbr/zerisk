@@ -18,7 +18,9 @@ WORKDIR /app
 RUN npm i -g npm@11
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci
+# `npm install` (not `ci`) tolerates/repairs the cross-platform optional-dep
+# entries (sharp musl binaries) that lack a version field in the lockfile.
+RUN npm install --no-audit --no-fund --loglevel=error
 
 # ---- build ----
 FROM base AS builder
