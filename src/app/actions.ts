@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  getCalibration,
   getTransaction,
   ingestTransaction,
   recalibrate,
@@ -155,6 +156,8 @@ export async function ingestTransactionAction(input: IngestInput) {
     ok: true,
     id: t.id,
     source: t.source,
+    modelVersion: getCalibration().version,
+    scoredAt: new Date(Date.UTC(2026, 6, 17, 12, 0)).toISOString(),
     original: { decision: t.originalDecision, riskScore: t.originalRiskScore },
     ai: {
       recommendation: t.ai.recommendation,

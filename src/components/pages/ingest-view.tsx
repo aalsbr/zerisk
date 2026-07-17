@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Radio, Send, ArrowRight, Copy, ExternalLink, ShieldAlert, Server, Zap } from "lucide-react";
+import { Radio, Send, ArrowRight, Copy, ExternalLink, ShieldAlert, Server, Zap, Bot, Sparkles, Loader2, Cpu } from "lucide-react";
 import { PageHeader, DisclaimerBar, Stat } from "@/components/shared/misc";
 import { DecisionBadge } from "@/components/shared/decision-badge";
 import { RiskGauge } from "@/components/shared/risk-gauge";
@@ -182,7 +182,7 @@ export function IngestView({ customers, rules, recent }: { customers: CustomerOp
               </Button>
             </Card>
 
-            <ResultPanel result={result} />
+            <ResultPanel key={result?.id ?? "empty"} result={result} />
           </div>
         </TabsContent>
 
@@ -247,8 +247,33 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <div className="space-y-1"><Label>{label}</Label>{children}</div>;
 }
 
+interface AiAnalysis {
+  summary: string;
+  customerImpact: string;
+  businessImpact: string;
+  supportingEvidence: { signal: string; value: string; source: string }[];
+  validationFailed: boolean;
+  meta: { source: "openai" | "local"; model: string; online: boolean };
+}
+
 function ResultPanel({ result }: { result: ActionResult | null }) {
   const { lang, pick, tr } = useI18n();
+  const { toast } = useToast();
+  const [ai2, setAi2] = React.useState<AiAnalysis | null>(null);
+  const [loadingAi, setLoadingAi] = React.useState(false);
+
+  async function runCopilot(id: string) {
+    setLoadingAi(true);
+    try {
+      const res = await fetch(`/api/v1/ai/transaction/${id}`);
+      setAi2(await res.json());
+    } catch {
+      toast({ kind: "error", title: pick("تعذّر تشغيل المساعد", "Copilot request failed") });
+    } finally {
+      setLoadingAi(false);
+    }
+  }
+
   if (!result) {
     return (
       <Card className="grid place-items-center p-5 text-center">
@@ -267,6 +292,17 @@ function ResultPanel({ result }: { result: ActionResult | null }) {
             <p className="text-xs text-muted">{result.source} · {fmtCurrency(result.amount, lang)}</p>
           </div>
           <Badge variant={recovered ? "coral" : "muted"}>{recovered ? pick("رفض خاطئ مُكتشف", "False positive detected") : pick("تم التقييم", "Assessed")}</Badge>
+        </div>
+
+        {/* Proof it was scored LIVE by the engine (not static) */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-[11px]">
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex size-2 animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+          </span>
+          <Cpu className="size-3.5 text-emerald-600" />
+          <span className="font-medium text-emerald-700">{pick("قُيّمت حيًّا بمحرك ZeRisk", "Scored live by the ZeRisk engine")}</span>
+          <span className="text-muted">· {pick("النموذج", "model")} {result.modelVersion} · {ai.processingTimeMs} ms</span>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -300,6 +336,32 @@ function ResultPanel({ result }: { result: ActionResult | null }) {
             <ul className="space-y-0.5 text-xs text-slate-600">{ai.increasing.slice(0, 4).map((r, i) => <li key={i}>• {tr(r)}</li>)}</ul>
           </div>
         )}
+
+        {/* OpenAI Copilot analysis (optional AI layer over the local engine) */}
+        <div className="mt-4 rounded-xl border border-navy-600 bg-navy-900/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700"><Bot className="size-4 text-coral-600" />{pick("تحليل المساعد الذكي (OpenAI)", "AI Copilot analysis (OpenAI)")}</span>
+            <Button size="sm" variant="secondary" onClick={() => runCopilot(result.id)} disabled={loadingAi}>
+              {loadingAi ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              {loadingAi ? pick("يحلل…", "Analyzing…") : pick("تشغيل التحليل", "Run analysis")}
+            </Button>
+          </div>
+          {ai2 && (
+            <div className="mt-3 space-y-2">
+              <Badge variant={ai2.meta.source === "openai" ? "success" : "warning"}>
+                {ai2.meta.source === "openai" ? `OpenAI · ${ai2.meta.model}` : pick("المحرك المحلي (احتياطي)", "Local engine (fallback)")}
+              </Badge>
+              <p className="text-xs leading-relaxed text-slate-700">{ai2.summary}</p>
+              {ai2.supportingEvidence?.length > 0 && (
+                <ul className="space-y-0.5 text-[11px] text-slate-600">
+                  {ai2.supportingEvidence.slice(0, 4).map((e, i) => (
+                    <li key={i}>• {e.value} <span className="text-muted">[{e.source}]</span></li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="mt-4 flex gap-2">
           <Link href={`/transactions/${result.id}`} className="flex-1"><Button variant="secondary" className="w-full"><ExternalLink className="size-4" />{pick("التحليل الكامل", "Full analysis")}</Button></Link>
