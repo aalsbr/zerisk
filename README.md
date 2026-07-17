@@ -205,6 +205,38 @@ rule severity, to yield the **optimized risk score**. Thresholds:
 the same output (no randomness) and every recommendation ships with signed **reason codes** in
 Arabic & English. Covered by unit tests.
 
+## 10b. Data-driven learning loop
+
+Nothing on the dashboards is hardcoded — every KPI, rule stat, insight and chart is
+**computed from the seeded database records** (`computeKpis`, `computeProfiles`, `computeRuleStats`).
+
+The MVP demonstrates a controlled, deterministic learning loop:
+
+```
+Transaction → Legacy engine → Scoring engine → OpenAI analysis (optional)
+   → Investigator feedback → Labeled outcome → Adaptive risk profiles
+   → Calibration update (ModelVersion FL-MVP-1.x) → Improved future recommendations
+```
+
+- **Adaptive risk profiles** (`src/lib/profiles.ts`) for customer / device / beneficiary /
+  channel / segment / rule, recalculated from confirmed labels (`LEGITIMATE` / `CONFIRMED_FRAUD`).
+- **Calibration** (`src/lib/learning.ts`) derives weighted/Bayesian factors (device-trust boost,
+  false-positive calibration, per-rule weights, segment/channel risk) from those profiles. The
+  scoring engine consumes them, so the **same DB state + input always yields the same result**.
+- **Recalibrate Model** (Learning / Evidence pages) reads all confirmed outcomes, recomputes
+  statistics, bumps the model version only when new labels exist, records a `LearningEvent` with a
+  real before/after diff, and updates dashboards.
+- **Live learning demo** on `/learning`: confirm `TX-DEMO-LEARN-001` legitimate → recalibrate →
+  `TX-DEMO-LEARN-002` (same device + beneficiary) shows a lower optimized score, higher
+  false-positive probability and higher confidence — caused by persisted feedback + recalculated
+  statistics, not a front-end animation.
+- **MVP Evidence** page (`/evidence`) surfaces the computed proof (FP rate before/after, recall
+  before/after, false negatives caught, model version, labeled outcomes, last recalibration) and
+  exports it as JSON.
+- **OpenAI analysis** (`/api/v1/ai/transaction/:id`) is given dynamic, locally-computed context and
+  its JSON is **validated with Zod** (source references required); invalid output is rejected and
+  the local engine is used — decisions/scores are always local.
+
 ## 11. Financial Impact Formulas
 
 ```
