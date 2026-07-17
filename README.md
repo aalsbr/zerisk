@@ -1,4 +1,6 @@
-# ZeRisk — ZeRisk
+# ZeRisk — منصة تحسين قرارات الاحتيال
+
+> **Live demo:** http://zerisk.168.119.63.163.sslip.io
 
 > An intelligent **decision-optimization layer** that sits **above** your existing fraud engines
 > (IBM Safer Payments, SAS, Feedzai, internal rule engines) — reducing false declines and
@@ -82,7 +84,7 @@ Prisma seed mirrors the same generator into SQLite for real persistence.
 | Layer | Choice |
 |------|--------|
 | Framework | **Next.js 16** (App Router, route group `(app)`), React 19, TypeScript **strict** |
-| Styling | **Tailwind CSS v4** (dark-navy + coral design system), custom shadcn-style primitives |
+| Styling | **Tailwind CSS v4** (light + coral design system), custom shadcn-style primitives |
 | Icons / Charts / Motion | lucide-react · Recharts 3 · Framer Motion 12 |
 | Data / ORM | **Prisma 6** + **SQLite** (18 models) |
 | AI scoring | Modular, deterministic TypeScript engine (`src/lib/scoring.ts`) — no paid API required |
